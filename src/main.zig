@@ -11,6 +11,7 @@ pub fn main(init: std.process.Init) !void {
 test {
     // Pull in every file's tests.
     std.testing.refAllDecls(@This());
+    _ = @import("testdata.zig");
 }
 
 test "libopus links" {
