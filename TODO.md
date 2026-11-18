@@ -4,7 +4,7 @@ In order. One item at a time: implement, test, commit, tick it here with the dat
 
 ## 0. Setup
 
-- [ ] Run `./fetch-docs.sh` (Zig langref, ReHLDS/ReHLTV at the pinned commit, the `dem` crate source)
+- [x] Run `./fetch-docs.sh` (Zig langref, ReHLDS/ReHLTV at the pinned commit, the `dem` crate source) (2026-11-18)
 - [ ] `build.zig`: exe `goldsrc-hltv-voice` from `src/main.zig`, links libc + libopus, `zig build test` runs every file's tests, `zig build run -- args`
 - [ ] A test helper that loads `testdata/*.dem` and `*.golden.tsv` (path relative to the build root)
 
