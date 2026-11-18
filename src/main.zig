@@ -20,6 +20,7 @@ test {
     _ = @import("players.zig");
     _ = @import("steamvoice.zig");
     _ = @import("opus.zig");
+    _ = @import("timeline.zig");
 }
 
 test "libopus links" {

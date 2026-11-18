@@ -38,8 +38,8 @@ The core. Port each `Server::ParseXxx` from ReHLTV `Core/src/Server.cpp` and the
 
 - [x] Steam voice packets: chunks, CRC, errors for truncated or unknown (2026-11-18; bad CRC policy in QUESTIONS.md)
 - [x] libopus decoder wrapper, per player, PLC for gaps up to 10 frames, reset on 0xFFFF or backwards sequence (2026-11-18)
-- [ ] Timeline: place at frame time, push back on overlap, `--tracks` merging
-- [ ] Tests: decoded sample counts per packet; speech intervals match `testdata/*.speech.tsv` (from the Rust tool's output) within 20 ms
+- [x] Timeline: place at frame time, push back on overlap, `--tracks` merging (2026-11-18)
+- [x] Tests: decoded sample counts per packet; speech intervals match `testdata/*.speech.tsv` (from the Rust tool's output) within 20 ms (2026-11-18)
 
 ## 5. Output (`mka.zig`)
 
