@@ -63,10 +63,17 @@ Frames in HLTV demos (verified on the test demos): the startup entry is one netw
 
 A network message frame's data is a sequence of messages: `u8 id`, then the message. No lengths, so every message must be parsed to find the next. The table of ids and parse functions is `Server::m_ClientFuncs` at the top of `Server.cpp`; each `Server::ParseXxx` shows exactly what to read.
 
-- ids 0..58 are engine messages (`svc_bad` 0 ... `svc_exec` 58). Protocol 48. The ids we need: `svc_updateuserinfo` 13, `svc_newusermsg` 39, `svc_voiceinit` 52, `svc_voicedata` 53.
+- ids 0..59 are engine messages (`svc_bad` 0 ... `svc_sendcvarvalue2` 58, `svc_exec` 59; 60..63 reserved). Protocol 48 (`svc_commands_e` in ReHLTV `common/net_internal.h`). The ids we need: `svc_updateuserinfo` 13, `svc_newusermsg` 39, `svc_voiceinit` 52, `svc_voicedata` 53.
 - ids >= 64 are **user messages** (mod-defined: `TeamInfo`, `ScoreInfo`, ...). Their size comes from the matching `svc_newusermsg` (index, size, 16-byte name). Size 255 (-1) means variable: a `u8` length follows the id.
 - Some messages switch to bit-level reading (delta-compressed): `svc_deltadescription`, `svc_clientdata`, `svc_packetentities`, `svc_deltapacketentities`, `svc_spawnbaseline`, `svc_event`, `svc_event_reliable`, plus `svc_sound` and some others use bit fields too. After a bit-level message the reader realigns to the next byte; check where ReHLTV does that.
 - `svc_temp_entity` has a size per temp entity type: see `ParseTempEntity`.
+- Every message is read through one bit cursor (ReHLTV reads bytes with `ReadBits(8)`). Bit-level messages end with `EndBitMode`, which aligns to the next byte, so byte-level messages always start aligned.
+- `svc_clientdata` is only the id byte once `svc_hltv` with HLTV_ACTIVE (0) was seen (ReHLTV `ParseClientData`, `World::WriteFrame`, engine `SV_WriteClientdataToMessage` for proxies). HLTV demos have that `svc_hltv` in the startup entry.
+- `svc_event`: the "has args" bit is only present after a packet index (engine `SV_EmitEvents`, and the `dem` crate). ReHLTV's `ParseEvent` reads it unconditionally, which is wrong for events without a packet index.
+- `svc_damage`, `svc_killedmonster`, `svc_foundsecret`: no payload, the engine never sends them. `svc_spawnstatic` (ReHLTV ignores it): engine `PF_makestatic_I` layout.
+- An unregistered user message id ends the frame (its size is unknown), as in ReHLTV. (The `dem` crate guesses a length byte.)
+- Entity lists (`svc_packetentities`, `svc_deltapacketentities`, `svc_spawnbaseline`): a delta's size depends only on the table (player table for entity numbers 1..maxclients, custom table for beams) and its field mask, not on the old values, so no entity history is needed to skip them. The instanced-baseline flag in entity headers exists only if `svc_spawnbaseline` announced instanced baselines.
+- Verified 2026-11-18: the three test demos parse with zero failed frames and the same total message count as `*.messages.tsv`.
 - Message counts per test demo are in `testdata/*.messages.tsv` (from the `dem` crate): your parser must see the same numbers.
 
 ### The ones we use (verified on the test demos)

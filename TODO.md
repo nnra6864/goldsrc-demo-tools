@@ -22,7 +22,7 @@ The core. Port each `Server::ParseXxx` from ReHLTV `Core/src/Server.cpp` and the
 
 - [x] Bit reader (ReHLTV `common/BitBuffer.cpp`): bits LSB first, signed bit values, bit-level strings, coords/angles if a message needs them, realigning to a byte (2026-11-18)
 - [x] Delta: the built-in meta description, `svc_deltadescription`, parsing (skipping) a delta-encoded value with a table (2026-11-18)
-- [ ] Every engine message 0..58, each with a unit test where a hand-built byte string is enough
+- [x] Every engine message 0..59 (svc_exec is 59), each with a unit test where a hand-built byte string is enough (2026-11-18)
 - [x] User messages: table from `svc_newusermsg`, fixed and variable sizes (2026-11-18)
 - [ ] Per-frame error isolation: a failure stops that frame only, and is recorded (entry, frame, time, offset in the frame, message id, last message ids before it)
 - [ ] Tests: the three test demos parse with **zero** failed frames; find the extra `SvcTime` in `truncated-no-directory.dem` (one more than type 1 frames, see `demo.zig` tests); message counts equal `*.messages.tsv`; `voice`, `userinfo`, `voiceinit`, `teaminfo` events equal `*.golden.tsv` exactly
