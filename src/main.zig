@@ -12,6 +12,7 @@ test {
     // Pull in every file's tests.
     std.testing.refAllDecls(@This());
     _ = @import("testdata.zig");
+    _ = @import("bits.zig");
 }
 
 test "libopus links" {
