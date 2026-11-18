@@ -2,4 +2,14 @@
 
 Gotchas found while working on this project. Add one whenever something about Zig 0.17 surprised you, with the fix, so the next agent doesn't repeat it. Check the std source (`/home/nn/.zvm/0.17.1/lib/std/`) before trusting memory of older Zig.
 
-(none yet)
+## Build system
+
+- **`@cImport` is gone.** C headers go through `b.addTranslateC(.{ .root_source_file = b.path("src/c.h"), .target, .optimize })`, then `module.addImport("c", translate_c.createModule())`, and `@import("c")` in code. The first translate-c of libopus takes about a minute; it is cached after that.
+- **Run args:** `run_cmd.addPassthruArgs()`, not `if (b.args) |args| run_cmd.addArgs(args)`.
+- **`b.build_root` / `b.pathFromRoot` don't exist** (the `Build` struct has `root: Cache.Path`). To give code a path to a source directory, use build options: `options.addOptionPathDirectory("testdata_dir", b.path("testdata"))`, `module.addOptions("build_options", options)`, then `@import("build_options").testdata_dir`. It also makes tests rebuild when the directory changes.
+- `b.addExecutable` / `b.addTest` take a `.root_module` (from `b.createModule`); `link_libc` is a module option, `module.linkSystemLibrary("opus", .{})` links a system library.
+
+## Runtime
+
+- `main` takes `init: std.process.Init` (has `.io`, `.gpa`, `.arena`, `.minimal.args`).
+- Tests get an `Io` from `std.testing.io`.
