@@ -66,7 +66,7 @@ src/
 
 Layers: `bits` knows nothing else. `demo` knows only the container. `messages` and `delta` know the protocol but nothing about players or audio. `players` consumes parsed messages. Audio (`steamvoice`, `opus`, `timeline`, `mka`) never sees the demo format.
 
-Memory: a demo is read whole into memory (they're a few MB, at most a few hundred). Decoded audio is mono f32 at 24 kHz per track, encoded to Opus track by track.
+Memory: a demo is read whole into memory (they're a few MB, at most a few hundred). Decoded audio is mono f32 at 24 kHz, rendered and encoded to Opus track by track in 60 s chunks, so memory does not grow with the demo length beyond the encoded tracks (silence is 3 bytes per 20 ms).
 
 ## Non-goals
 

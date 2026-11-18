@@ -177,7 +177,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, args: []const []const u8, out: *s
         return .err;
     }
 
-    // Render and encode track by track: only one timeline in memory.
+    // Render and encode track by track.
     var rendered: timeline.Report = .{};
     defer rendered.deinit(gpa);
     var encoded: std.ArrayList(mka.EncodedTrack) = .empty;
@@ -186,11 +186,21 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, args: []const []const u8, out: *s
         encoded.deinit(gpa);
     }
     const len = timeline.length(duration);
+    // A chunk at a time too, so memory does not grow with the demo's length.
+    const chunk = try gpa.alloc(f32, @min(len, timeline.chunk_samples));
+    defer gpa.free(chunk);
     for (track_list) |t| {
-        const pcm = try timeline.renderTrack(gpa, t, len, &rendered);
-        defer gpa.free(pcm);
+        var r: timeline.TrackRenderer = try .init(gpa, t, len);
+        defer r.deinit(gpa);
+        var e: mka.TrackEncoder = try .init(gpa, t.title, t.steamid);
+        defer e.deinit(gpa);
+        while (true) {
+            const pcm = try r.next(gpa, chunk, &rendered);
+            if (pcm.len == 0) break;
+            try e.feed(gpa, pcm);
+        }
         try encoded.ensureUnusedCapacity(gpa, 1);
-        encoded.appendAssumeCapacity(try mka.encodeTrack(gpa, t.title, t.steamid, pcm));
+        encoded.appendAssumeCapacity(try e.finish(gpa));
     }
 
     const partial = try report(err, d, &walk, &rendered);

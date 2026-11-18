@@ -44,33 +44,85 @@ pub const EncodedTrack = struct {
     }
 };
 
-/// Encodes a mono 24 kHz timeline to Opus at `bitrate`. The input is padded
-/// with silence so the encoder delay is flushed out too.
-pub fn encodeTrack(gpa: std.mem.Allocator, name: []const u8, steamid: []const u8, pcm: []const f32) !EncodedTrack {
-    var enc: opus.Encoder = try .init(input_rate, bitrate);
-    defer enc.deinit();
-    const delay = try enc.lookahead();
-    var t: EncodedTrack = .{
-        .name = try utf8Lossy(gpa, name),
-        .steamid = &.{},
-        .pre_skip = @intCast(delay * (48000 / input_rate)),
-    };
-    errdefer t.deinit(gpa);
-    t.steamid = try gpa.dupe(u8, steamid);
+/// Encodes a mono 24 kHz timeline to Opus at `bitrate`, fed in pieces of
+/// any length, so a long timeline never has to be in memory at once.
+pub const TrackEncoder = struct {
+    enc: opus.Encoder,
+    track: EncodedTrack,
+    /// Encoder delay at 24 kHz, flushed out with silence at the end.
+    delay: u32,
+    frame: [frame_samples]f32 = undefined,
+    /// Samples in `frame` so far.
+    fill: usize = 0,
+    finished: bool = false,
 
-    const total = pcm.len + delay;
-    const frames = (total + frame_samples - 1) / frame_samples;
-    try t.ends.ensureTotalCapacity(gpa, frames);
-    var frame: [frame_samples]f32 = undefined;
-    var out: [1500]u8 = undefined;
-    for (0..frames) |k| {
-        const start = k * frame_samples;
-        for (&frame, start..) |*s, i| s.* = if (i < pcm.len) std.math.clamp(pcm[i], -1, 1) else 0;
-        const n = try enc.encode(&frame, &out);
-        try t.bytes.appendSlice(gpa, out[0..n]);
-        t.ends.appendAssumeCapacity(@intCast(t.bytes.items.len));
+    pub fn init(gpa: std.mem.Allocator, name: []const u8, steamid: []const u8) !TrackEncoder {
+        var enc: opus.Encoder = try .init(input_rate, bitrate);
+        errdefer enc.deinit();
+        const delay = try enc.lookahead();
+        const owned_name = try utf8Lossy(gpa, name);
+        errdefer gpa.free(owned_name);
+        return .{
+            .enc = enc,
+            .delay = delay,
+            .track = .{
+                .name = owned_name,
+                .steamid = try gpa.dupe(u8, steamid),
+                .pre_skip = @intCast(delay * (48000 / input_rate)),
+            },
+        };
     }
-    return t;
+
+    /// Frees the track too unless `finish` handed it out.
+    pub fn deinit(e: *TrackEncoder, gpa: std.mem.Allocator) void {
+        e.enc.deinit();
+        if (!e.finished) e.track.deinit(gpa);
+    }
+
+    /// Encodes the next samples of the timeline.
+    pub fn feed(e: *TrackEncoder, gpa: std.mem.Allocator, pcm: []const f32) !void {
+        for (pcm) |x| {
+            e.frame[e.fill] = std.math.clamp(x, -1, 1);
+            e.fill += 1;
+            if (e.fill == frame_samples) try e.encodeFrame(gpa);
+        }
+    }
+
+    fn encodeFrame(e: *TrackEncoder, gpa: std.mem.Allocator) !void {
+        var out: [1500]u8 = undefined;
+        const n = try e.enc.encode(&e.frame, &out);
+        try e.track.bytes.appendSlice(gpa, out[0..n]);
+        try e.track.ends.append(gpa, @intCast(e.track.bytes.items.len));
+        e.fill = 0;
+    }
+
+    /// Pads with silence so the encoder delay is flushed out, and returns
+    /// the track. The caller owns it; `deinit` still frees the encoder.
+    pub fn finish(e: *TrackEncoder, gpa: std.mem.Allocator) !EncodedTrack {
+        std.debug.assert(!e.finished);
+        var left: usize = e.delay;
+        while (left != 0) {
+            const n = @min(left, frame_samples - e.fill);
+            @memset(e.frame[e.fill..][0..n], 0);
+            e.fill += n;
+            left -= n;
+            if (e.fill == frame_samples) try e.encodeFrame(gpa);
+        }
+        if (e.fill != 0) {
+            @memset(e.frame[e.fill..], 0);
+            try e.encodeFrame(gpa);
+        }
+        e.finished = true;
+        return e.track;
+    }
+};
+
+/// Encodes a whole mono 24 kHz timeline (see `TrackEncoder`).
+pub fn encodeTrack(gpa: std.mem.Allocator, name: []const u8, steamid: []const u8, pcm: []const f32) !EncodedTrack {
+    var e: TrackEncoder = try .init(gpa, name, steamid);
+    defer e.deinit(gpa);
+    try e.feed(gpa, pcm);
+    return e.finish(gpa);
 }
 
 /// Copies `s`, replacing invalid UTF-8 with U+FFFD (player names are raw
@@ -386,4 +438,23 @@ test "ffprobe reads tracks, names, tags and duration; ffmpeg decodes cleanly" {
     defer gpa.free(decode.stderr);
     try testing.expect(decode.term.success());
     try testing.expectEqualStrings("", decode.stderr);
+}
+
+test "TrackEncoder: fed in pieces, same packets as all at once" {
+    const gpa = testing.allocator;
+    var pcm: [input_rate / 2 + 123]f32 = undefined;
+    for (&pcm, 0..) |*x, i| x.* = 0.4 * @sin(@as(f32, @floatFromInt(i)) * 0.05);
+    var whole = try encodeTrack(gpa, "p", "1", &pcm);
+    defer whole.deinit(gpa);
+    for ([_]usize{ 1, 7, 479, 480, 1000 }) |size| {
+        var e: TrackEncoder = try .init(gpa, "p", "1");
+        defer e.deinit(gpa);
+        var i: usize = 0;
+        while (i < pcm.len) : (i += size) try e.feed(gpa, pcm[i..@min(i + size, pcm.len)]);
+        var t = try e.finish(gpa);
+        defer t.deinit(gpa);
+        try testing.expectEqual(whole.pre_skip, t.pre_skip);
+        try testing.expectEqualSlices(u32, whole.ends.items, t.ends.items);
+        try testing.expectEqualSlices(u8, whole.bytes.items, t.bytes.items);
+    }
 }

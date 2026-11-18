@@ -51,7 +51,8 @@ The core. Port each `Server::ParseXxx` from ReHLTV `Core/src/Server.cpp` and the
 
 - [x] Flags and exit codes as in `DESIGN.md`, `--dump`, `--lenient` (2026-11-18)
 - [x] Same results as the Rust tool on every demo in `/tank/media/Replays/Counter-Strike_1.6/` (read only) (2026-11-18: `--dump` output and exit code byte-identical on all 7, including a 15.8 h, 561 MB demo still being recorded: 0.5 s vs 4.2 s)
-- [ ] (Low priority, owner: recording will restart each map, so very long demos shouldn't happen) Memory for long demos: a timeline is dense f32 PCM, about 345 MB per track per hour (the 15.8 h demo above would need 5.4 GB per track if anyone spoke). Render and encode in time chunks, or keep only the stretches with voice and encode silence frames directly
+- [x] (Low priority, owner: recording will restart each map, so very long demos shouldn't happen) Memory for long demos: a timeline is dense f32 PCM, about 345 MB per track per hour (the 15.8 h demo above would need 5.4 GB per track if anyone spoke). Render and encode in time chunks, or keep only the stretches with voice and encode silence frames directly (2026-11-18: rendered and encoded in 60 s chunks, `.mka` byte-identical on every test and archive demo; what stays in memory is the encoded track, silence is 3-byte packets, about 1.3 MB per track per hour)
+- [ ] (Low priority) Encoding speed: libopus at default complexity costs about 8.6 ms CPU per second of audio per track, mostly encoding silence (1.8 s for the 212 s `rejoin-team-switch.dem`, so about 31 s per track per hour). Options: emit a fixed silence packet for all-zero frames once the encoder is idle, or lower the complexity. Either changes the output bytes, so check speech timing against `testdata/*.speech.tsv` again
 
 ## 7. Then (ask before starting)
 
