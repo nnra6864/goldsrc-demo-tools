@@ -199,8 +199,9 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, args: []const []const u8, out: *s
         return .partial;
     }
     if (track_list.len == 0) {
-        try err.print("goldsrc-hltv-voice: no voice in {s}\n", .{o.demo});
-        return if (partial) .partial else .err;
+        // Nobody spoke: nothing to write, and nothing went wrong.
+        try err.print("note: no voice in {s}, nothing written\n", .{o.demo});
+        return if (partial) .partial else .ok;
     }
 
     const out_path = if (o.out) |p| try gpa.dupe(u8, p) else try defaultOutput(gpa, o.demo);
@@ -347,12 +348,13 @@ test "cli: writes a .mka the reference way, and --dump writes nothing" {
     try tmp.dir.access(testing.io, "out.mka", .{});
 }
 
-test "cli: no voice is an error; the cut-off last frame only a note" {
+test "cli: no voice exits 0 and writes nothing; the cut-off last frame is only a warning" {
     const gpa = testing.allocator;
     var path_buf: [512]u8 = undefined;
     var r = try cli(gpa, &.{try fixturePath(&path_buf, "truncated-no-directory")});
     defer r.deinit();
-    try testing.expectEqual(Exit.err, r.code);
+    try testing.expectEqual(Exit.ok, r.code);
+    try testing.expectEqualStrings("", r.out.written());
     try testing.expect(std.mem.indexOf(u8, r.err.written(), "note: no directory") != null);
     try testing.expect(std.mem.indexOf(u8, r.err.written(), "warning: the file ends inside a frame") != null);
     try testing.expect(std.mem.indexOf(u8, r.err.written(), "no voice in") != null);

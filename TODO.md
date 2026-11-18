@@ -36,7 +36,7 @@ The core. Port each `Server::ParseXxx` from ReHLTV `Core/src/Server.cpp` and the
 
 ## 4. Audio (`steamvoice.zig`, `opus.zig`, `timeline.zig`)
 
-- [x] Steam voice packets: chunks, CRC, errors for truncated or unknown (2026-11-18; bad CRC policy in QUESTIONS.md)
+- [x] Steam voice packets: chunks, CRC, errors for truncated or unknown (2026-11-18; bad CRC: decode and warn, owner's call)
 - [x] libopus decoder wrapper, per player, PLC for gaps up to 10 frames, reset on 0xFFFF or backwards sequence (2026-11-18)
 - [x] Timeline: place at frame time, push back on overlap, `--tracks` merging (2026-11-18)
 - [x] Tests: decoded sample counts per packet; speech intervals match `testdata/*.speech.tsv` (from the Rust tool's output) within 20 ms (2026-11-18)
@@ -51,7 +51,7 @@ The core. Port each `Server::ParseXxx` from ReHLTV `Core/src/Server.cpp` and the
 
 - [x] Flags and exit codes as in `DESIGN.md`, `--dump`, `--lenient` (2026-11-18)
 - [x] Same results as the Rust tool on every demo in `/tank/media/Replays/Counter-Strike_1.6/` (read only) (2026-11-18: `--dump` output and exit code byte-identical on all 7, including a 15.8 h, 561 MB demo still being recorded: 0.5 s vs 4.2 s)
-- [ ] Memory for long demos: a timeline is dense f32 PCM, about 345 MB per track per hour (the 15.8 h demo above would need 5.4 GB per track if anyone spoke). Render and encode in time chunks, or keep only the stretches with voice and encode silence frames directly
+- [ ] (Low priority, owner: recording will restart each map, so very long demos shouldn't happen) Memory for long demos: a timeline is dense f32 PCM, about 345 MB per track per hour (the 15.8 h demo above would need 5.4 GB per track if anyone spoke). Render and encode in time chunks, or keep only the stretches with voice and encode silence frames directly
 
 ## 7. Then (ask before starting)
 

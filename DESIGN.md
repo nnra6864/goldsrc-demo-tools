@@ -32,7 +32,7 @@ Same flags and behaviour as the Rust prototype, plus `--lenient`.
 - `--lenient`: write the `.mka` even if some frames failed to parse (they're still reported).
 - Exit codes: 0 ok, 1 error, 2 usage, 3 partial (frames failed to parse, without `--lenient`: nothing written).
   - Partial means voice may be missing: a frame whose messages failed to parse, a corrupt frame length that ends the scan, or a voice packet that failed to decode. A cut-off last frame (crashed or killed HLTV) is only a warning. With `--lenient` the `.mka` is written and the exit code is still 3, so scripts can tell.
-  - No voice at all: exit 1 and nothing written, like the Rust tool (see QUESTIONS.md).
+  - No voice at all: exit 0, nothing written, a note on stderr (owner, 2026-11-18; the Rust tool exits 1).
   - `--dump` exits 3 too when the demo is partial.
   - The `.mka` is written to a temporary file and renamed into place: never a half-written file under the final name.
 
@@ -42,6 +42,7 @@ Same flags and behaviour as the Rust prototype, plus `--lenient`.
 - **Slots:** `svc_updateuserinfo` with an empty userinfo frees the slot. Voice from a slot with no known player gets a placeholder player `slot N` (N = slot + 1, as in the Rust tool). An empty `name` frees the slot too, and voice packets with no data are ignored (as in the Rust tool).
 - **Starting team:** the first `TeamInfo` of TERRORIST or CT for that player. Team changes later (halftime, switching) don't move the track.
 - **Timeline:** each voice packet is decoded and placed at its frame's demo time. If it would overlap the previous audio of the same player, it goes right after it instead (packets arrive in bursts within one frame). Silence between bursts stays silence.
+- **Bad CRC:** a Steam voice packet whose checksum doesn't match is still decoded (no voice dropped) and counted in a warning; it doesn't change the exit code (owner, 2026-11-18).
 - **Decoding:** one libopus decoder per player. Sequence gaps of up to 10 frames are concealed (Opus PLC, 20 ms per lost frame), longer gaps conceal 10 frames and the rest is silence. A sequence going backwards or a 0xFFFF length resets the decoder. A packet that fails to decode is lost as a whole and reported. (The Rust tool asks libopus for 120 ms of PLC per lost frame, which stretches gaps 6x and pushes later speech back; none of the test demos has a gap, so it does not show in the fixtures.)
 - **Output:** Matroska, one Opus track per output track, 48 kHz mono, about 48 kb/s, track `title` = player name, tag `STEAMID` = SteamID, segment title = demo file name. Duration = demo duration.
 
