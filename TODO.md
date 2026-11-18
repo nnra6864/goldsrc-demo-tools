@@ -29,10 +29,10 @@ The core. Port each `Server::ParseXxx` from ReHLTV `Core/src/Server.cpp` and the
 
 ## 3. Players (`players.zig`)
 
-- [ ] Slots and identities by SteamID, rejoin, rename, HLTV skipped, placeholder for unknown slots
-- [ ] Starting team from `TeamInfo`
-- [ ] Join order and team order
-- [ ] Tests: `rejoin-team-switch.dem` gives one player `nnra`, SteamID 76561199487820327, starting team T, 379 packets; `one-player.dem` gives CT, 47 packets; `truncated-no-directory.dem` gives no speakers
+- [x] Slots and identities by SteamID, rejoin, rename, HLTV skipped, placeholder for unknown slots (2026-11-18)
+- [x] Starting team from `TeamInfo` (2026-11-18)
+- [x] Join order and team order (2026-11-18)
+- [x] Tests: `rejoin-team-switch.dem` gives one player `nnra`, SteamID 76561199487820327, starting team T, 379 packets; `one-player.dem` gives CT, 47 packets; `truncated-no-directory.dem` gives no speakers (2026-11-18)
 
 ## 4. Audio (`steamvoice.zig`, `opus.zig`, `timeline.zig`)
 

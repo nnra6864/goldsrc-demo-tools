@@ -35,7 +35,7 @@ Same flags and behaviour as the Rust prototype, plus `--lenient`.
 ## Behaviour
 
 - **Players are identified by SteamID** (`*sid` in userinfo), falling back to `name:<name>` when there's none. A rejoin, even in another slot, continues the same track. The latest name is the track name. `*hltv` clients are skipped.
-- **Slots:** `svc_updateuserinfo` with an empty userinfo frees the slot. Voice from a slot with no known player gets a placeholder player `slot N`.
+- **Slots:** `svc_updateuserinfo` with an empty userinfo frees the slot. Voice from a slot with no known player gets a placeholder player `slot N` (N = slot + 1, as in the Rust tool). An empty `name` frees the slot too, and voice packets with no data are ignored (as in the Rust tool).
 - **Starting team:** the first `TeamInfo` of TERRORIST or CT for that player. Team changes later (halftime, switching) don't move the track.
 - **Timeline:** each voice packet is decoded and placed at its frame's demo time. If it would overlap the previous audio of the same player, it goes right after it instead (packets arrive in bursts within one frame). Silence between bursts stays silence.
 - **Decoding:** one libopus decoder per player. Sequence gaps of up to 10 frames are concealed (Opus PLC), longer gaps are silence. A sequence going backwards or a 0xFFFF length resets the decoder.

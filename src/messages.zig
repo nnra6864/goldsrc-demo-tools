@@ -575,6 +575,8 @@ pub const DemoMessages = struct {
     frames: demo.FrameIterator,
     failures: std.ArrayList(FrameFailure) = .empty,
     current: ?struct { frame: demo.Frame, messages: MessageIterator } = null,
+    /// Latest time of any frame read so far: the demo's duration at the end.
+    max_time: f32 = 0,
 
     pub fn init(gpa: std.mem.Allocator, d: demo.Demo) DemoMessages {
         return .{ .parser = .init(gpa), .frames = d.frames() };
@@ -606,6 +608,7 @@ pub const DemoMessages = struct {
                 w.current = null;
             }
             const f = w.frames.next() orelse return null;
+            w.max_time = @max(w.max_time, f.time);
             if (!f.type.isNetwork()) continue;
             w.current = .{ .frame = f, .messages = w.parser.frame(f.data) };
         }
@@ -1082,6 +1085,7 @@ test "DemoMessages: a bad frame is recorded and the next frames still parse" {
     try testing.expectEqualSlices(u8, &.{ 0x35, 0x01 }, f.failure.previousIds());
     try testing.expectEqual(@as(usize, 12), f.frame_len);
     try testing.expectEqual(@as(?demo.ScanProblem, null), w.frames.problem);
+    try testing.expectEqual(@as(f32, 3.5), w.max_time);
 }
 
 const testdata = @import("testdata.zig");

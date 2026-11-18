@@ -17,6 +17,7 @@ test {
     _ = @import("delta.zig");
     _ = @import("usermsg.zig");
     _ = @import("messages.zig");
+    _ = @import("players.zig");
 }
 
 test "libopus links" {
