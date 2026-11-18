@@ -57,7 +57,7 @@ Each frame: `type u8, time f32, frame i32`, then by type:
 
 Any other type value (10..255) is read as a network frame, like types 0 and 1: `DemoFile::ReadDemoPacket` (its `default:` case) and the `dem` crate both do that. We do too and count them, since in practice it is more likely corruption. The frame's `time` is the demo time in seconds, the timeline for voice. The demo info is 436 bytes (`demo_info_t`), so the message length is at 9 + 436 + 28 bytes into a network frame (verified: walking the test demos with these sizes lands exactly on the directory offset). The length is at most 65536 (`MAX_POSSIBLE_MSG`); larger or negative is corrupt.
 
-Frames in HLTV demos (verified on the test demos): the startup entry is one network frame (type 0) and a next-section frame. The game entry is a start-time frame, then network frames (type 1) each followed by a client-data frame, and a final next-section frame. Every game-entry network frame holds one `svc_time` (finalized demos: exactly as many `SvcTime` as type 1 frames; `truncated-no-directory.dem` has one `SvcTime` more than type 1 frames, not yet located).
+Frames in HLTV demos (verified on the test demos): the startup entry is one network frame (type 0) and a next-section frame. The game entry is a start-time frame, then network frames (type 1), each but the last followed by a client-data frame, and a final next-section frame. Every game-entry network frame holds one `svc_time` (finalized demos: exactly as many `SvcTime` as type 1 frames; `truncated-no-directory.dem` has one `SvcTime` more than type 1 frames, not yet located).
 
 ## Net messages (ReHLTV `Core/src/Server.cpp`)
 

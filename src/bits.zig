@@ -72,6 +72,179 @@ pub const ByteReader = struct {
     }
 };
 
+/// Reads a net message stream at bit level, like ReHLTV `common/BitBuffer.cpp`:
+/// bits LSB first within each byte, multi-bit values little-endian.
+///
+/// In ReHLTV every read (bytes, shorts, strings) is a bit read from the
+/// current bit position; bit-mode messages realign to a byte when they end
+/// (`alignByte`). Reads that only make sense on a byte boundary (`bytes`,
+/// `string`) return `error.Misaligned` elsewhere.
+pub const BitReader = struct {
+    buf: []const u8,
+    /// Position in bits from the start of `buf`.
+    bit: usize = 0,
+
+    pub const Error = error{ EndOfBuffer, Misaligned };
+
+    /// Longest string `string` returns, like ReHLTV's 8192-byte buffer
+    /// (8191 chars plus NUL).
+    pub const max_string = 8191;
+
+    pub fn init(buf: []const u8) BitReader {
+        return .{ .buf = buf };
+    }
+
+    pub fn bitsLeft(r: BitReader) usize {
+        return r.buf.len * 8 - r.bit;
+    }
+
+    /// Byte offset of the current position (rounded down).
+    pub fn byteOffset(r: BitReader) usize {
+        return r.bit / 8;
+    }
+
+    pub fn isAligned(r: BitReader) bool {
+        return r.bit % 8 == 0;
+    }
+
+    pub fn atEnd(r: BitReader) bool {
+        return r.bit == r.buf.len * 8;
+    }
+
+    /// Moves to the next byte boundary, if not on one (ReHLTV `AlignByte`,
+    /// done by `EndBitMode`).
+    pub fn alignByte(r: *BitReader) void {
+        r.bit = std.mem.alignForward(usize, r.bit, 8);
+    }
+
+    /// `n` (0..32) bits as an unsigned value.
+    pub fn readBits(r: *BitReader, n: u6) Error!u32 {
+        const v = try r.peekBits(n);
+        r.bit += n;
+        return v;
+    }
+
+    /// `n` (0..32) bits without consuming them.
+    pub fn peekBits(r: BitReader, n: u6) Error!u32 {
+        std.debug.assert(n <= 32);
+        if (n == 0) return 0;
+        if (n > r.bitsLeft()) return error.EndOfBuffer;
+        const first = r.bit / 8;
+        const shift: u6 = @intCast(r.bit % 8);
+        // At most 7 + 32 = 39 bits: 5 bytes.
+        const avail = @min(5, r.buf.len - first);
+        var window: u64 = 0;
+        for (r.buf[first..][0..avail], 0..) |b, i| window |= @as(u64, b) << @intCast(i * 8);
+        const mask = (@as(u64, 1) << n) - 1;
+        return @intCast((window >> shift) & mask);
+    }
+
+    pub fn readBit(r: *BitReader) Error!bool {
+        return try r.readBits(1) == 1;
+    }
+
+    /// Sign and magnitude: one sign bit, then `n - 1` bits (ReHLTV
+    /// `ReadSBits`). `n` is 1..32.
+    pub fn readSBits(r: *BitReader, n: u6) Error!i32 {
+        std.debug.assert(n >= 1 and n <= 32);
+        if (n > r.bitsLeft()) return error.EndOfBuffer;
+        const negative = try r.readBit();
+        const magnitude: i64 = try r.readBits(n - 1);
+        return @intCast(if (negative) -magnitude else magnitude);
+    }
+
+    pub fn skipBits(r: *BitReader, n: usize) Error!void {
+        if (n > r.bitsLeft()) return error.EndOfBuffer;
+        r.bit += n;
+    }
+
+    pub fn readByte(r: *BitReader) Error!u8 {
+        return @intCast(try r.readBits(8));
+    }
+
+    /// A signed byte (ReHLTV `ReadChar` as used for angles).
+    pub fn readChar(r: *BitReader) Error!i8 {
+        return @bitCast(try r.readByte());
+    }
+
+    pub fn readShort(r: *BitReader) Error!u16 {
+        return @intCast(try r.readBits(16));
+    }
+
+    pub fn readLong(r: *BitReader) Error!u32 {
+        return r.readBits(32);
+    }
+
+    pub fn readFloat(r: *BitReader) Error!f32 {
+        return @bitCast(try r.readLong());
+    }
+
+    pub fn skipBytes(r: *BitReader, n: usize) Error!void {
+        if (n > r.bitsLeft() / 8) return error.EndOfBuffer;
+        r.bit += n * 8;
+    }
+
+    /// The next `n` bytes, borrowed. Only on a byte boundary.
+    pub fn bytes(r: *BitReader, n: usize) Error![]const u8 {
+        if (!r.isAligned()) return error.Misaligned;
+        const start = r.bit / 8;
+        if (n > r.buf.len - start) return error.EndOfBuffer;
+        r.bit += n * 8;
+        return r.buf[start..][0..n];
+    }
+
+    /// A NUL-terminated string, borrowed, without the NUL. Only on a byte
+    /// boundary. Like ReHLTV `ReadString`, stops after `max_string` chars
+    /// even without a NUL (the rest is read as what follows). Running out of
+    /// data before a NUL is `error.EndOfBuffer`.
+    pub fn string(r: *BitReader) Error![]const u8 {
+        if (!r.isAligned()) return error.Misaligned;
+        const start = r.bit / 8;
+        const rest = r.buf[start..];
+        const limit = @min(rest.len, max_string);
+        if (std.mem.indexOfScalar(u8, rest[0..limit], 0)) |len| {
+            r.bit += (len + 1) * 8;
+            return rest[0..len];
+        }
+        if (limit == max_string) {
+            r.bit += max_string * 8;
+            return rest[0..max_string];
+        }
+        return error.EndOfBuffer;
+    }
+
+    /// Skips a string of 8-bit chars up to and including a NUL, at any bit
+    /// position (ReHLTV `ReadBitString`, delta `DT_STRING`). No length limit.
+    pub fn skipBitString(r: *BitReader) Error!void {
+        while (try r.readByte() != 0) {}
+    }
+
+    /// ReHLTV `ReadBitCoord`: int and fraction flags, sign, 12-bit integer,
+    /// 3-bit fraction (eighths).
+    pub fn readBitCoord(r: *BitReader) Error!f32 {
+        const has_int = try r.readBit();
+        const has_frac = try r.readBit();
+        if (!has_int and !has_frac) return 0;
+        const negative = try r.readBit();
+        const int_part: f32 = if (has_int) @floatFromInt(try r.readBits(12)) else 0;
+        const frac_part: f32 = if (has_frac) @floatFromInt(try r.readBits(3)) else 0;
+        const v = int_part + frac_part / 8;
+        return if (negative) -v else v;
+    }
+
+    /// ReHLTV `ReadBitVec3Coord`: three presence flags, then each present
+    /// coordinate. Absent ones are 0.
+    pub fn readBitVec3Coord(r: *BitReader) Error![3]f32 {
+        var present: [3]bool = undefined;
+        for (&present) |*p| p.* = try r.readBit();
+        var v: [3]f32 = @splat(0);
+        for (present, &v) |p, *c| {
+            if (p) c.* = try r.readBitCoord();
+        }
+        return v;
+    }
+};
+
 const testing = std.testing;
 
 test "ByteReader: integers are little-endian" {
@@ -117,4 +290,126 @@ test "ByteReader: NUL-terminated strings" {
     try testing.expectEqualStrings("", try r.cString());
     try testing.expectError(error.EndOfBuffer, r.cString());
     try testing.expectEqual(@as(usize, 6), r.pos);
+}
+
+test "BitReader: bits are LSB first and cross byte boundaries" {
+    // 0b1011_0110, 0b1100_0011
+    var r: BitReader = .init(&.{ 0xb6, 0xc3 });
+    try testing.expectEqual(@as(u32, 0b0110), try r.readBits(4));
+    try testing.expectEqual(true, try r.readBit());
+    try testing.expectEqual(@as(u32, 0b101), try r.readBits(3));
+    try testing.expect(r.isAligned());
+    var r2: BitReader = .init(&.{ 0xb6, 0xc3 });
+    try r2.skipBits(5);
+    // Bits 5..12: 101 from byte 0, then 00011 from byte 1.
+    try testing.expectEqual(@as(u32, 0b00011_101), try r2.readBits(8));
+    try testing.expectEqual(@as(usize, 3), r2.bitsLeft());
+}
+
+test "BitReader: 32-bit reads at every bit offset" {
+    const data = [_]u8{ 0x78, 0x56, 0x34, 0x12, 0xef, 0xcd, 0xab, 0x89 };
+    const whole = std.mem.readInt(u64, &data, .little);
+    for (0..33) |off| {
+        var r: BitReader = .init(&data);
+        try r.skipBits(off);
+        const want: u32 = @truncate(whole >> @intCast(off));
+        try testing.expectEqual(want, try r.readBits(32));
+    }
+}
+
+test "BitReader: little-endian shorts, longs and floats" {
+    var r: BitReader = .init(&.{ 0x34, 0x12, 0x78, 0x56, 0x34, 0x12, 0x00, 0x00, 0x80, 0x3f, 0xff });
+    try testing.expectEqual(@as(u16, 0x1234), try r.readShort());
+    try testing.expectEqual(@as(u32, 0x12345678), try r.readLong());
+    try testing.expectEqual(@as(f32, 1.0), try r.readFloat());
+    try testing.expectEqual(@as(i8, -1), try r.readChar());
+}
+
+test "BitReader: signed values are sign and magnitude" {
+    // Sign bit 1, magnitude 5 in 7 bits: 0b0000101_1 = 0x0b.
+    var r: BitReader = .init(&.{ 0x0b, 0x0a });
+    try testing.expectEqual(@as(i32, -5), try r.readSBits(8));
+    // Sign 0, magnitude 5.
+    try testing.expectEqual(@as(i32, 5), try r.readSBits(8));
+    var r1: BitReader = .init(&.{0x01});
+    try testing.expectEqual(@as(i32, 0), try r1.readSBits(1)); // "negative zero"
+}
+
+test "BitReader: reading past the end errors and keeps the position" {
+    var r: BitReader = .init(&.{ 0xff, 0x01 });
+    try r.skipBits(3);
+    try testing.expectError(error.EndOfBuffer, r.readBits(14));
+    try testing.expectEqual(@as(usize, 3), r.bit);
+    try testing.expectEqual(@as(u32, 0x3f), try r.readBits(13) & 0x3f);
+    try testing.expectError(error.EndOfBuffer, r.readBit());
+    try testing.expectError(error.EndOfBuffer, r.skipBits(1));
+    try testing.expectEqual(@as(u32, 0), try r.readBits(0));
+    var e: BitReader = .init(&.{});
+    try testing.expectError(error.EndOfBuffer, e.readSBits(1));
+    try testing.expectError(error.EndOfBuffer, e.peekBits(1));
+}
+
+test "BitReader: peek does not consume" {
+    var r: BitReader = .init(&.{ 0xff, 0xff, 0x00 });
+    try testing.expectEqual(@as(u32, 0xffff), try r.peekBits(16));
+    try testing.expectEqual(@as(usize, 0), r.bit);
+}
+
+test "BitReader: strings and bytes need a byte boundary" {
+    var r: BitReader = .init("ab\x00cd\x00\x07xyz");
+    try testing.expectEqualStrings("ab", try r.string());
+    try testing.expectEqualStrings("cd", try r.string());
+    _ = try r.readBit();
+    try testing.expectError(error.Misaligned, r.string());
+    try testing.expectError(error.Misaligned, r.bytes(1));
+    r.alignByte();
+    try testing.expectEqualSlices(u8, "xy", try r.bytes(2));
+    // No NUL before the end.
+    try testing.expectError(error.EndOfBuffer, r.string());
+    try testing.expectError(error.EndOfBuffer, r.bytes(2));
+    r.alignByte(); // already aligned: no move
+    try testing.expectEqualSlices(u8, "z", try r.bytes(1));
+    try testing.expect(r.atEnd());
+}
+
+test "BitReader: strings stop at 8191 chars like ReHLTV" {
+    var buf: [BitReader.max_string + 2]u8 = @splat('a');
+    buf[buf.len - 1] = 0;
+    var r: BitReader = .init(&buf);
+    try testing.expectEqual(@as(usize, BitReader.max_string), (try r.string()).len);
+    // The 8192nd char and the NUL are left over.
+    try testing.expectEqualStrings("a", try r.string());
+}
+
+test "BitReader: bit strings at any offset" {
+    // "hi\0" shifted by one bit, then a 1 bit.
+    const raw = [_]u8{ 'h', 'i', 0 };
+    const v = std.mem.readInt(u24, &raw, .little);
+    const shifted: u32 = (@as(u32, v) << 1) | 1 | (1 << 25);
+    var b: [4]u8 = undefined;
+    std.mem.writeInt(u32, &b, shifted, .little);
+    var r: BitReader = .init(&b);
+    try testing.expect(try r.readBit());
+    try r.skipBitString();
+    try testing.expectEqual(@as(usize, 25), r.bit);
+    try testing.expect(try r.readBit());
+}
+
+test "BitReader: bit coords" {
+    // flags int=1 frac=1, sign=1, int=3 (12 bits), frac=4 (3 bits): -3.5
+    var bits: u32 = 0;
+    var n: u5 = 0;
+    for ([_]struct { v: u32, w: u5 }{ .{ .v = 1, .w = 1 }, .{ .v = 1, .w = 1 }, .{ .v = 1, .w = 1 }, .{ .v = 3, .w = 12 }, .{ .v = 4, .w = 3 } }) |f| {
+        bits |= f.v << n;
+        n += f.w;
+    }
+    var b: [4]u8 = undefined;
+    std.mem.writeInt(u32, &b, bits, .little);
+    var r: BitReader = .init(&b);
+    try testing.expectEqual(@as(f32, -3.5), try r.readBitCoord());
+    try testing.expectEqual(@as(usize, 18), r.bit);
+    var z: BitReader = .init(&.{0});
+    try testing.expectEqual(@as(f32, 0), try z.readBitCoord());
+    try testing.expectEqual(@as(usize, 2), z.bit);
+    try testing.expectEqual([3]f32{ 0, 0, 0 }, try z.readBitVec3Coord());
 }

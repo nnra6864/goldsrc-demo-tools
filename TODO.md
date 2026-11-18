@@ -20,7 +20,7 @@ In order. One item at a time: implement, test, commit, tick it here with the dat
 
 The core. Port each `Server::ParseXxx` from ReHLTV `Core/src/Server.cpp` and the decoding from `Core/src/Delta.cpp`. Keep only what we need; skip the rest correctly.
 
-- [ ] Bit reader (ReHLTV `common/BitBuffer.cpp`): bits LSB first, signed bit values, bit-level strings, coords/angles if a message needs them, realigning to a byte
+- [x] Bit reader (ReHLTV `common/BitBuffer.cpp`): bits LSB first, signed bit values, bit-level strings, coords/angles if a message needs them, realigning to a byte (2026-11-18)
 - [ ] Delta: the built-in meta description, `svc_deltadescription`, parsing (skipping) a delta-encoded value with a table
 - [ ] Every engine message 0..58, each with a unit test where a hand-built byte string is enough
 - [ ] User messages: table from `svc_newusermsg`, fixed and variable sizes
