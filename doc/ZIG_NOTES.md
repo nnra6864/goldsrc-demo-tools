@@ -16,5 +16,5 @@ Gotchas found while working on this project. Add one whenever something about Zi
 
 ## Language
 
-- **`**` (array repetition) is gone.** `[_]u8{0} ** n` fails with "binary operator '*' has whitespace on one side". Use `var a: [n]u8 = @splat(0);`.
+- **`**` (array repetition) is gone.** `[_]u8{0} ** n` fails with "binary operator '*' has whitespace on one side". Use `var a: [n]u8 = @splat(0);`, or `@as([n]u8, @splat(0))` inside an expression. `++` still works, but an anonymous `&.{ 1, 2 } ++ x` doesn't: write `&([_]u8{ 1, 2 } ++ x)`.
 - `@cImport` is gone too (see Build system).

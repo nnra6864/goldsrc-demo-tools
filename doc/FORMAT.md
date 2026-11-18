@@ -55,7 +55,7 @@ Each frame: `type u8, time f32, frame i32`, then by type:
 | 8 | sound | channel i32, sample length i32, sample name, then attenuation f32, volume f32, flags i32, pitch i32 |
 | 9 | demo buffer | length i32, then `length` bytes |
 
-Any other type value is an error (`DemoFile::ReadDemoPacket` treats it as the end of the frame chain). The frame's `time` is the demo time in seconds, the timeline for voice. The 436-byte demo info size: check against `demo_info_t` (timestamp, ref_params_t, usercmd_t, movevars_t, view, viewmodel) and the `dem` crate; the total network frame header of 468 bytes before the messages is the commonly documented value.
+Any other type value (10..255) is read as a network frame, like types 0 and 1: `DemoFile::ReadDemoPacket` (its `default:` case) and the `dem` crate both do that. We do too and count them, since in practice it is more likely corruption. The frame's `time` is the demo time in seconds, the timeline for voice. The demo info is 436 bytes (`demo_info_t`), so the message length is at 9 + 436 + 28 bytes into a network frame (verified: walking the test demos with these sizes lands exactly on the directory offset). The length is at most 65536 (`MAX_POSSIBLE_MSG`); larger or negative is corrupt.
 
 ## Net messages (ReHLTV `Core/src/Server.cpp`)
 

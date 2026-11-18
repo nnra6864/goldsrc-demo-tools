@@ -160,6 +160,209 @@ pub fn parseDirectory(data: []const u8, header: Header) DirectoryResult {
     return .{ .ok = dir };
 }
 
+/// Frame types (ReHLTV `DemoCmd`). Any value not listed is read as a network
+/// frame, like ReHLTV and the `dem` crate do.
+pub const FrameType = enum(u8) {
+    /// Network messages of the startup entry.
+    network_startup = 0,
+    /// Network messages of the normal entry.
+    network = 1,
+    start_time = 2,
+    console_command = 3,
+    client_data = 4,
+    /// Ends the entry.
+    next_section = 5,
+    event = 6,
+    weapon_anim = 7,
+    sound = 8,
+    demo_buffer = 9,
+    _,
+
+    /// True for frames that carry net messages.
+    pub fn isNetwork(t: FrameType) bool {
+        return switch (t) {
+            .start_time, .console_command, .client_data, .next_section, .event, .weapon_anim, .sound, .demo_buffer => false,
+            .network_startup, .network, _ => true,
+        };
+    }
+};
+
+/// Every frame starts with type u8, time f32, frame i32.
+pub const frame_header_size = 9;
+/// Bytes between a network frame's header and its message length:
+/// demo info (436) and sequence info (7 x i32).
+pub const network_info_size = 436 + 28;
+/// Largest network message block (ReHLTV `MAX_POSSIBLE_MSG`).
+pub const max_message_length = 65536;
+
+/// One frame of the demo.
+pub const Frame = struct {
+    /// Directory entry (or section, without a directory) the frame is in.
+    entry: u32,
+    /// Index in the entry's frame list, counting every frame type.
+    index: u32,
+    /// File offset of the frame's type byte.
+    offset: usize,
+    type: FrameType,
+    /// Demo time in seconds: the timeline for voice.
+    time: f32,
+    /// Engine frame number, as recorded.
+    frame: i32,
+    /// The payload after the frame header. For network frames, only the net
+    /// message bytes. Borrowed from the demo bytes.
+    data: []const u8,
+};
+
+/// Why a frame scan stopped before the end.
+pub const ScanProblem = struct {
+    kind: Kind,
+    /// Entry and index the bad frame would have had.
+    entry: u32,
+    index: u32,
+    /// File offset of the bad frame.
+    offset: usize,
+    /// Time of the last good frame (0 if none).
+    last_time: f32,
+
+    pub const Kind = enum {
+        /// The file ends inside a frame. Expected for demos that were never
+        /// finalized: a warning, not an error.
+        truncated,
+        /// A length field is negative or too big: the demo is corrupt here.
+        bad_length,
+        /// A directory entry ended at the end of the file with no next-section
+        /// frame.
+        missing_next_section,
+    };
+
+    /// True if this may have lost data beyond a cut-off last frame.
+    pub fn isError(p: ScanProblem) bool {
+        return p.kind == .bad_length;
+    }
+
+    pub fn describe(p: ScanProblem) []const u8 {
+        return switch (p.kind) {
+            .truncated => "the file ends inside a frame",
+            .bad_length => "a frame has a bad length field",
+            .missing_next_section => "the file ends without a next-section frame",
+        };
+    }
+};
+
+/// Iterates every frame of every entry, in file order of the entries.
+///
+/// With a directory, each entry's frames are read from the entry's offset up
+/// to and including its next-section frame. Without one (or with an unusable
+/// one), frames are read from `header_size` to the end of the file, and each
+/// next-section frame starts a new entry.
+pub const FrameIterator = struct {
+    data: []const u8,
+    directory: ?Directory,
+    entry: u32 = 0,
+    index: u32 = 0,
+    pos: usize,
+    done: bool = false,
+    last_time: f32 = 0,
+    /// Set when the scan stopped early. Check it after `next` returns null.
+    problem: ?ScanProblem = null,
+    /// Frames whose type is not 0..9 (read as network frames). Unusual;
+    /// worth a warning.
+    unusual_types: u32 = 0,
+
+    pub fn init(data: []const u8, directory: ?Directory) FrameIterator {
+        const start: usize = if (directory) |d| @intCast(d.entry(0).offset) else header_size;
+        return .{ .data = data, .directory = directory, .pos = start };
+    }
+
+    /// The next frame, or null at the end (or on a problem: see `problem`).
+    pub fn next(it: *FrameIterator) ?Frame {
+        if (it.done) return null;
+        if (it.pos == it.data.len) {
+            it.done = true;
+            // Without a directory the file may end anywhere between frames.
+            if (it.directory != null) it.stop(.missing_next_section);
+            return null;
+        }
+        const frame = it.readFrame() catch |err| {
+            it.stop(switch (err) {
+                error.EndOfBuffer => .truncated,
+                error.BadLength => .bad_length,
+            });
+            return null;
+        };
+        it.last_time = frame.time;
+        if (frame.type == .next_section) {
+            it.entry += 1;
+            it.index = 0;
+            if (it.directory) |d| {
+                if (it.entry >= d.count()) {
+                    it.done = true;
+                } else {
+                    it.pos = @intCast(d.entry(it.entry).offset);
+                }
+            }
+        } else {
+            it.index += 1;
+        }
+        return frame;
+    }
+
+    fn stop(it: *FrameIterator, kind: ScanProblem.Kind) void {
+        it.done = true;
+        it.problem = .{ .kind = kind, .entry = it.entry, .index = it.index, .offset = it.pos, .last_time = it.last_time };
+    }
+
+    /// Reads the frame at `pos` and advances past it. On error `pos` is
+    /// unchanged.
+    fn readFrame(it: *FrameIterator) (bits.ByteReader.Error || error{BadLength})!Frame {
+        var r: bits.ByteReader = .init(it.data);
+        r.pos = it.pos;
+        const frame_type: FrameType = @fromBackingInt(@intCast(try r.int(u8)));
+        const time = try r.float();
+        const engine_frame = try r.int(i32);
+        const payload_start = r.pos;
+        var data: []const u8 = undefined;
+        switch (frame_type) {
+            .start_time, .next_section => data = &.{},
+            .console_command => data = try r.bytes(64),
+            .client_data => data = try r.bytes(32),
+            .event => data = try r.bytes(84),
+            .weapon_anim => data = try r.bytes(8),
+            .sound => {
+                try r.skip(4); // channel
+                const sample_len = try r.int(i32);
+                if (sample_len < 0) return error.BadLength;
+                try r.skip(@intCast(sample_len));
+                try r.skip(16); // attenuation, volume, flags, pitch
+                data = it.data[payload_start..r.pos];
+            },
+            .demo_buffer => {
+                const len = try r.int(i32);
+                if (len < 0) return error.BadLength;
+                data = try r.bytes(@intCast(len));
+            },
+            .network_startup, .network, _ => {
+                try r.skip(network_info_size);
+                const len = try r.int(i32);
+                if (len < 0 or len > max_message_length) return error.BadLength;
+                data = try r.bytes(@intCast(len));
+                if (@backingInt(frame_type) > 9) it.unusual_types += 1;
+            },
+        }
+        const offset = it.pos;
+        it.pos = r.pos;
+        return .{
+            .entry = it.entry,
+            .index = it.index,
+            .offset = offset,
+            .type = frame_type,
+            .time = time,
+            .frame = engine_frame,
+            .data = data,
+        };
+    }
+};
+
 const testing = std.testing;
 const testdata = @import("testdata.zig");
 
@@ -246,5 +449,139 @@ test "header and directory of the test demos" {
                 try testing.expectEqual(header.directory_offset, normal.offset + normal.length);
             },
         }
+    }
+}
+
+/// Builds synthetic demos for tests.
+const TestDemo = struct {
+    buf: std.ArrayList(u8) = .empty,
+
+    fn init(gpa: std.mem.Allocator) !TestDemo {
+        var d: TestDemo = .{};
+        try d.buf.appendSlice(gpa, &testHeader(0));
+        return d;
+    }
+
+    fn deinit(d: *TestDemo, gpa: std.mem.Allocator) void {
+        d.buf.deinit(gpa);
+    }
+
+    fn int(d: *TestDemo, gpa: std.mem.Allocator, comptime T: type, v: T) !void {
+        var b: [@divExact(@typeInfo(T).int.bits, 8)]u8 = undefined;
+        std.mem.writeInt(T, &b, v, .little);
+        try d.buf.appendSlice(gpa, &b);
+    }
+
+    fn frame(d: *TestDemo, gpa: std.mem.Allocator, t: u8, time: f32, payload: []const u8) !void {
+        try d.buf.append(gpa, t);
+        try d.int(gpa, u32, @bitCast(time));
+        try d.int(gpa, i32, 7);
+        try d.buf.appendSlice(gpa, payload);
+    }
+
+    fn network(d: *TestDemo, gpa: std.mem.Allocator, t: u8, time: f32, msgs: []const u8) !void {
+        try d.frame(gpa, t, time, &.{});
+        try d.buf.appendNTimes(gpa, 0xaa, network_info_size);
+        try d.int(gpa, i32, @intCast(msgs.len));
+        try d.buf.appendSlice(gpa, msgs);
+    }
+};
+
+test "FrameIterator: every frame type, no directory" {
+    const gpa = testing.allocator;
+    var d: TestDemo = try .init(gpa);
+    defer d.deinit(gpa);
+    try d.network(gpa, 0, 0, "startup");
+    try d.frame(gpa, 5, 0, &.{});
+    try d.frame(gpa, 2, 0.5, &.{});
+    try d.frame(gpa, 3, 1, &@as([64]u8, @splat('c')));
+    try d.frame(gpa, 4, 1, &@as([32]u8, @splat(4)));
+    try d.frame(gpa, 6, 1, &@as([84]u8, @splat(6)));
+    try d.frame(gpa, 7, 1, &@as([8]u8, @splat(7)));
+    // sound: channel, sample length 3, "abc", 16 bytes
+    try d.frame(gpa, 8, 1, &([_]u8{ 1, 0, 0, 0, 3, 0, 0, 0, 'a', 'b', 'c' } ++ @as([16]u8, @splat(0))));
+    try d.frame(gpa, 9, 1, &.{ 2, 0, 0, 0, 'x', 'y' });
+    try d.network(gpa, 1, 2.5, "net");
+    try d.network(gpa, 42, 3, "odd");
+
+    var it: FrameIterator = .init(d.buf.items, null);
+    const want = [_]struct { entry: u32, index: u32, t: u8, len: usize }{
+        .{ .entry = 0, .index = 0, .t = 0, .len = 7 },
+        .{ .entry = 0, .index = 1, .t = 5, .len = 0 },
+        .{ .entry = 1, .index = 0, .t = 2, .len = 0 },
+        .{ .entry = 1, .index = 1, .t = 3, .len = 64 },
+        .{ .entry = 1, .index = 2, .t = 4, .len = 32 },
+        .{ .entry = 1, .index = 3, .t = 6, .len = 84 },
+        .{ .entry = 1, .index = 4, .t = 7, .len = 8 },
+        .{ .entry = 1, .index = 5, .t = 8, .len = 4 + 4 + 3 + 16 },
+        .{ .entry = 1, .index = 6, .t = 9, .len = 2 },
+        .{ .entry = 1, .index = 7, .t = 1, .len = 3 },
+        .{ .entry = 1, .index = 8, .t = 42, .len = 3 },
+    };
+    for (want) |w| {
+        const f = it.next() orelse return error.TestUnexpectedNull;
+        try testing.expectEqual(w.entry, f.entry);
+        try testing.expectEqual(w.index, f.index);
+        try testing.expectEqual(w.t, @backingInt(f.type));
+        try testing.expectEqual(w.len, f.data.len);
+        try testing.expectEqual(@as(i32, 7), f.frame);
+    }
+    try testing.expectEqual(@as(?Frame, null), it.next());
+    try testing.expectEqual(@as(?ScanProblem, null), it.problem);
+    try testing.expectEqual(@as(u32, 1), it.unusual_types);
+    try testing.expect(FrameType.isNetwork(@fromBackingInt(@intCast(42))));
+}
+
+test "FrameIterator: net message bytes and time" {
+    const gpa = testing.allocator;
+    var d: TestDemo = try .init(gpa);
+    defer d.deinit(gpa);
+    try d.network(gpa, 1, 12.25, &.{ 53, 0, 3, 0, 1, 2, 3 });
+    var it: FrameIterator = .init(d.buf.items, null);
+    const f = it.next().?;
+    try testing.expectEqual(FrameType.network, f.type);
+    try testing.expectEqual(@as(f32, 12.25), f.time);
+    try testing.expectEqual(@as(usize, header_size), f.offset);
+    try testing.expectEqualSlices(u8, &.{ 53, 0, 3, 0, 1, 2, 3 }, f.data);
+}
+
+test "FrameIterator: a cut-off last frame ends the scan with a warning" {
+    const gpa = testing.allocator;
+    var d: TestDemo = try .init(gpa);
+    defer d.deinit(gpa);
+    try d.network(gpa, 1, 1, "ok");
+    const good_end = d.buf.items.len;
+    try d.network(gpa, 1, 2, "cut off here");
+    // Every possible cut inside the second frame.
+    for (good_end + 1..d.buf.items.len) |end| {
+        var it: FrameIterator = .init(d.buf.items[0..end], null);
+        try testing.expect(it.next() != null);
+        try testing.expectEqual(@as(?Frame, null), it.next());
+        const p = it.problem.?;
+        try testing.expectEqual(ScanProblem.Kind.truncated, p.kind);
+        try testing.expectEqual(good_end, p.offset);
+        try testing.expectEqual(@as(u32, 1), p.index);
+        try testing.expectEqual(@as(f32, 1), p.last_time);
+        try testing.expect(!p.isError());
+    }
+}
+
+test "FrameIterator: bad lengths are errors" {
+    const gpa = testing.allocator;
+    const cases = [_]struct { t: u8, payload: []const u8 }{
+        .{ .t = 9, .payload = &.{ 0xff, 0xff, 0xff, 0xff } },
+        .{ .t = 8, .payload = &.{ 0, 0, 0, 0, 0xfe, 0xff, 0xff, 0xff } },
+        .{ .t = 1, .payload = &(@as([network_info_size]u8, @splat(0)) ++ [_]u8{ 0xff, 0xff, 0xff, 0xff }) },
+        .{ .t = 1, .payload = &(@as([network_info_size]u8, @splat(0)) ++ [_]u8{ 0x01, 0x00, 0x01, 0x00 }) },
+    };
+    for (cases) |c| {
+        var d: TestDemo = try .init(gpa);
+        defer d.deinit(gpa);
+        try d.frame(gpa, c.t, 0, c.payload);
+        try d.buf.appendNTimes(gpa, 0, 70000);
+        var it: FrameIterator = .init(d.buf.items, null);
+        try testing.expectEqual(@as(?Frame, null), it.next());
+        try testing.expectEqual(ScanProblem.Kind.bad_length, it.problem.?.kind);
+        try testing.expect(it.problem.?.isError());
     }
 }
