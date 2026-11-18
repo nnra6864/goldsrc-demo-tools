@@ -31,6 +31,10 @@ Same flags and behaviour as the Rust prototype, plus `--lenient`.
 - `--dump`: print the codec, each player (starting team, name, SteamID, join time, packet count, first/last voice time) and their first packets, and write nothing.
 - `--lenient`: write the `.mka` even if some frames failed to parse (they're still reported).
 - Exit codes: 0 ok, 1 error, 2 usage, 3 partial (frames failed to parse, without `--lenient`: nothing written).
+  - Partial means voice may be missing: a frame whose messages failed to parse, a corrupt frame length that ends the scan, or a voice packet that failed to decode. A cut-off last frame (crashed or killed HLTV) is only a warning. With `--lenient` the `.mka` is written and the exit code is still 3, so scripts can tell.
+  - No voice at all: exit 1 and nothing written, like the Rust tool (see QUESTIONS.md).
+  - `--dump` exits 3 too when the demo is partial.
+  - The `.mka` is written to a temporary file and renamed into place: never a half-written file under the final name.
 
 ## Behaviour
 

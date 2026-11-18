@@ -49,7 +49,7 @@ The core. Port each `Server::ParseXxx` from ReHLTV `Core/src/Server.cpp` and the
 
 ## 6. CLI (`main.zig`, `dump.zig`)
 
-- [ ] Flags and exit codes as in `DESIGN.md`, `--dump`, `--lenient`
+- [x] Flags and exit codes as in `DESIGN.md`, `--dump`, `--lenient` (2026-11-18)
 - [ ] Same results as the Rust tool on every demo in `/tank/media/Replays/Counter-Strike_1.6/` (read only)
 
 ## 7. Then (ask before starting)

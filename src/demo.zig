@@ -389,18 +389,27 @@ pub const Demo = struct {
 };
 
 /// Writes a demo time with 6 decimals, like Rust's `{:.6}` (the reference
-/// tool's format): the exact value of the f32, rounded half to even, with a
-/// `-` for any negative value, even one that rounds to zero.
+/// tool's format). See `formatFixed`.
 pub fn formatTime(w: *std.Io.Writer, t: f32) std.Io.Writer.Error!void {
-    // 24-bit mantissa times 10^6 (= 2^6 * 15625, 14 bits) fits in an f64's
+    return formatFixed(w, t, 6);
+}
+
+/// Writes `t` with `decimals` (0..6) decimals like Rust's `{:.N}`: the exact
+/// value of the f32, rounded half to even, with a `-` for any negative
+/// value, even one that rounds to zero.
+pub fn formatFixed(w: *std.Io.Writer, t: f32, comptime decimals: u3) std.Io.Writer.Error!void {
+    comptime std.debug.assert(decimals <= 6);
+    const scale = comptime std.math.pow(u64, 10, decimals);
+    // A 24-bit mantissa times 10^6 (= 2^6 * 15625, 14 bits) fits in an f64's
     // 53 bits: the product is exact, and so is the rounding below.
-    const scaled = @abs(@as(f64, t)) * 1e6;
+    const scaled = @abs(@as(f64, t)) * @as(f64, @floatFromInt(scale));
     var units = @floor(scaled);
     const rest = scaled - units;
     if (rest > 0.5 or (rest == 0.5 and @mod(units, 2) == 1)) units += 1;
-    const micros: u64 = @intFromFloat(units);
+    const n: u64 = @intFromFloat(units);
     if (std.math.signbit(t) and !std.math.isNan(t)) try w.writeByte('-');
-    try w.print("{d}.{d:0>6}", .{ micros / 1_000_000, micros % 1_000_000 });
+    try w.print("{d}", .{n / scale});
+    if (decimals > 0) try w.print(".{d:0>[1]}", .{ n % scale, decimals });
 }
 
 const testing = std.testing;
@@ -719,6 +728,12 @@ test "formatTime: exact value, half to even, negative zero" {
         .{ .t = 0.0234375, .want = "0.023438" },
         .{ .t = 1234.5, .want = "1234.500000" },
     };
+    var buf1: [16]u8 = undefined;
+    var w1: std.Io.Writer = .fixed(&buf1);
+    try formatFixed(&w1, 1.25, 1);
+    try formatFixed(&w1, 0.75, 1);
+    try formatFixed(&w1, 2.5, 0);
+    try testing.expectEqualStrings("1.20.82", w1.buffered());
     for (cases) |c| {
         var buf: [64]u8 = undefined;
         var w: std.Io.Writer = .fixed(&buf);
