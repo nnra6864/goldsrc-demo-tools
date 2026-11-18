@@ -43,9 +43,9 @@ The core. Port each `Server::ParseXxx` from ReHLTV `Core/src/Server.cpp` and the
 
 ## 5. Output (`mka.zig`)
 
-- [ ] EBML writer, Matroska with one Opus track per output track, track names, STEAMID tags, duration
-- [ ] libopus encoder, 48 kb/s mono
-- [ ] Tests: `ffprobe` reads track count, names, tags, duration; `ffmpeg -v error -i out.mka -f null -` reports nothing (only if ffmpeg is installed; skip otherwise)
+- [x] EBML writer, Matroska with one Opus track per output track, track names, STEAMID tags, duration (2026-11-18)
+- [x] libopus encoder, 48 kb/s mono (2026-11-18)
+- [x] Tests: `ffprobe` reads track count, names, tags, duration; `ffmpeg -v error -i out.mka -f null -` reports nothing (only if ffmpeg is installed; skip otherwise) (2026-11-18)
 
 ## 6. CLI (`main.zig`, `dump.zig`)
 

@@ -113,3 +113,5 @@ Packets only exist while someone transmits. With an open mic, Steam's voice acti
 ## Matroska output
 
 Minimal Matroska is enough: EBML header (DocType `matroska`), Segment with Info (TimecodeScale 1 ms, Duration, Title), Tracks (per track: TrackNumber, TrackUID, TrackType audio, CodecID `A_OPUS`, CodecPrivate = the 19-byte OpusHead, CodecDelay, SeekPreRoll 80 ms, Name, Audio: SamplingFrequency 48000, Channels 1), Tags (STEAMID per track), and Clusters with SimpleBlocks. Encode at 48 kHz (resample 24 kHz x2, or tell libopus the input is 24 kHz: an Opus encoder accepts 24 kHz input directly and the stream still decodes at 48 kHz, check `opus_encoder_create`). Verify the result with `ffprobe` and by decoding it with `ffmpeg -f null`.
+
+What `mka.zig` writes (verified with ffprobe and `ffmpeg -f null`, 2026-11-18): 8-byte sizes on master elements, the encoder at 24 kHz input (OpusHead input rate 24000, pre-skip = encoder lookahead x 2 at 48 kHz, CodecDelay to match), 20 ms frames as SimpleBlocks (keyframe flag, no lacing), clusters of 5 s, track UIDs 1..n, tags targeted by TagTrackUID. No Cues or SeekHead yet.

@@ -21,6 +21,7 @@ test {
     _ = @import("steamvoice.zig");
     _ = @import("opus.zig");
     _ = @import("timeline.zig");
+    _ = @import("mka.zig");
 }
 
 test "libopus links" {
