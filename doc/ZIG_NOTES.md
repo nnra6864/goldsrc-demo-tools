@@ -13,3 +13,8 @@ Gotchas found while working on this project. Add one whenever something about Zi
 
 - `main` takes `init: std.process.Init` (has `.io`, `.gpa`, `.arena`, `.minimal.args`).
 - Tests get an `Io` from `std.testing.io`.
+
+## Language
+
+- **`**` (array repetition) is gone.** `[_]u8{0} ** n` fails with "binary operator '*' has whitespace on one side". Use `var a: [n]u8 = @splat(0);`.
+- `@cImport` is gone too (see Build system).

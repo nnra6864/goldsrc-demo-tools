@@ -13,6 +13,7 @@ test {
     std.testing.refAllDecls(@This());
     _ = @import("testdata.zig");
     _ = @import("bits.zig");
+    _ = @import("demo.zig");
 }
 
 test "libopus links" {

@@ -11,7 +11,7 @@ In order. One item at a time: implement, test, commit, tick it here with the dat
 ## 1. Demo container (`bits.zig`, `demo.zig`)
 
 - [x] Byte reader: bounds-checked, little-endian ints and floats, fixed-size and NUL-terminated strings (2026-11-18)
-- [ ] Header and directory
+- [x] Header and directory (2026-11-18)
 - [ ] Frame iterator over every frame type (`doc/FORMAT.md`), yielding time, entry, frame index, and the raw net message bytes of network frames
 - [ ] No directory (offset 0): scan from offset 544 to EOF; a cut-off last frame ends the scan with a warning, not an error
 - [ ] Tests: all three test demos iterate to the end; network frame counts are consistent with `*.messages.tsv` (`SvcTime` appears once per network frame in HLTV demos, check that)

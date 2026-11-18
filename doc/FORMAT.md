@@ -35,7 +35,9 @@ At the directory offset: entry count (i32, 1..1024), then entries of 92 bytes:
 | 4 | offset of the entry's frames, i32 |
 | 4 | length in bytes, i32 |
 
-HLTV demos have 2 entries: startup then normal.
+HLTV demos have 2 entries: startup then normal. The entries are contiguous (`startup.offset + startup.length == normal.offset`) and the directory follows the last one. **The frame count is not the number of frames**: in HLTV demos it counts network frames only (entry 0: 0, entry 1: the number of type 1 frames). Read each entry's frames until its next-section frame (type 5) instead, as the `dem` crate does (verified on the test demos).
+
+A directory ReHLTV can't use (entry count not in 1..1024) makes it read frames right after the header instead, as if there were no directory. We do the same for any unusable directory (offset or entries outside the file) and warn.
 
 ### Frames
 
