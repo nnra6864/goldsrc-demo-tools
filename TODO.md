@@ -50,7 +50,8 @@ The core. Port each `Server::ParseXxx` from ReHLTV `Core/src/Server.cpp` and the
 ## 6. CLI (`main.zig`, `dump.zig`)
 
 - [x] Flags and exit codes as in `DESIGN.md`, `--dump`, `--lenient` (2026-11-18)
-- [ ] Same results as the Rust tool on every demo in `/tank/media/Replays/Counter-Strike_1.6/` (read only)
+- [x] Same results as the Rust tool on every demo in `/tank/media/Replays/Counter-Strike_1.6/` (read only) (2026-11-18: `--dump` output and exit code byte-identical on all 7, including a 15.8 h, 561 MB demo still being recorded: 0.5 s vs 4.2 s)
+- [ ] Memory for long demos: a timeline is dense f32 PCM, about 345 MB per track per hour (the 15.8 h demo above would need 5.4 GB per track if anyone spoke). Render and encode in time chunks, or keep only the stretches with voice and encode silence frames directly
 
 ## 7. Then (ask before starting)
 
