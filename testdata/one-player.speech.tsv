@@ -1,0 +1,4 @@
+# speech intervals (seconds) in the Rust tool output, ffmpeg silencedetect n=-45dB d=0.4
+start	end
+43.278	45.975
+49.186	49.779
