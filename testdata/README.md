@@ -1,6 +1,6 @@
 # Test data
 
-Real HLTV demos from the owner's CS 1.6 server (ReHLDS 3.15, ReHLTV, ReGameDLL 5.30, Steam client), recorded 2026-11-18, plus outputs of the Rust prototype (`~/Containers/counter-strike/tools/demo-voice`, the reference). **Never edit these files** (AGENTS.md rule 5).
+Real HLTV demos from the owner's CS 1.6 server (ReHLDS 3.15, ReHLTV, ReGameDLL 5.30, Steam client), recorded 2026-11-18, plus outputs of the Rust prototype (`tools/demo-voice` in [counter-strike-podman](https://git.nnstdios.com/nnra6864/counter-strike-podman) at commit `138a934` (removed after it), the reference). **Never edit these files** (AGENTS.md rule 5).
 
 | Demo | What's in it |
 |---|---|

@@ -54,8 +54,8 @@ The core. Port each `Server::ParseXxx` from ReHLTV `Core/src/Server.cpp` and the
 - [x] (Low priority, owner: recording will restart each map, so very long demos shouldn't happen) Memory for long demos: a timeline is dense f32 PCM, about 345 MB per track per hour (the 15.8 h demo above would need 5.4 GB per track if anyone spoke). Render and encode in time chunks, or keep only the stretches with voice and encode silence frames directly (2026-11-18: rendered and encoded in 60 s chunks, `.mka` byte-identical on every test and archive demo; what stays in memory is the encoded track, silence is 3-byte packets, about 1.3 MB per track per hour)
 - [ ] (Low priority) Encoding speed: libopus at default complexity costs about 8.6 ms CPU per second of audio per track, mostly encoding silence (1.8 s for the 212 s `rejoin-team-switch.dem`, so about 31 s per track per hour). Options: emit a fixed silence packet for all-zero frames once the encoder is idle, or lower the complexity. Either changes the output bytes, so check speech timing against `testdata/*.speech.tsv` again
 
-## 7. Then (ask before starting)
+## 7. Then
 
-- [ ] In the server container (`~/Containers/counter-strike`): build in a stage, run after each map when HLTV closes the demo, `--order` per server (regular `join`, competitive `team`). The owner deploys; agents only prepare the change
-- [ ] Forgejo repo, README usage
-- [ ] Retire the Rust prototype
+- [x] In the server container (`~/Containers/counter-strike`): build in a stage, run after each map when HLTV closes the demo, `--order` per server (regular `join`, competitive `team`). The owner deploys; agents only prepare the change (2026-11-18: counter-strike-podman `0b165b5`, not pushed or deployed; `voice.sh`, `ENABLE_VOICE_MKA`, `VOICE_MKA_ARGS`; libopus 1.6.1 built from source since bookworm's 1.3.1 fails the speech test)
+- [x] Forgejo repo, README usage (2026-11-18)
+- [x] Retire the Rust prototype (2026-11-18: counter-strike-podman `6f960f2`; the reference is now `138a934`)

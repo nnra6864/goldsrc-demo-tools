@@ -16,7 +16,7 @@ Instructions for AI coding agents working on goldsrc-hltv-voice. Read this, then
 
 ## What this project is
 
-A CLI that reads a GoldSrc demo (`.dem`, mainly HLTV demos from CS 1.6) and writes its voice chat as one `.mka` with an Opus track per player. It replaces a working Rust prototype (`~/Containers/counter-strike/tools/demo-voice`), which is the behavioural reference. The owner cares about voice replays a lot: **never lose or corrupt voice silently**.
+A CLI that reads a GoldSrc demo (`.dem`, mainly HLTV demos from CS 1.6) and writes its voice chat as one `.mka` with an Opus track per player. It replaced a Rust prototype (`tools/demo-voice` in [counter-strike-podman](https://git.nnstdios.com/nnra6864/counter-strike-podman) at commit `138a934` (removed after it)), which is the behavioural reference. The owner cares about voice replays a lot: **never lose or corrupt voice silently**.
 
 ## Hard rules
 
@@ -37,7 +37,7 @@ A CLI that reads a GoldSrc demo (`.dem`, mainly HLTV demos from CS 1.6) and writ
 - **Format references** (fetched by `./fetch-docs.sh` into `doc/generated/ref/`, pinned commits):
   - ReHLTV (in the ReHLDS repo, `rehlds/HLTV/`): the HLTV that records these demos. **This is the spec.** `common/DemoFile.cpp` (demo container), `Core/src/Server.cpp` (every svc message), `Core/src/Delta.cpp` (delta decoding), `common/BitBuffer.cpp` (bit reading).
   - The `dem` Rust crate 0.3.0: an independent GoldSrc demo parser. Use it as a second opinion, not as the spec.
-  - The Rust prototype: `~/Containers/counter-strike/tools/demo-voice/src/` (Steam voice, timeline, track order).
+  - The Rust prototype: `git -C ~/Containers/counter-strike show 138a934:tools/demo-voice/src/main.rs` (and `steamvoice.rs`): Steam voice, timeline, track order.
 - `doc/FORMAT.md` has what is already known and verified. Add to it when you verify more.
 - Large files: search them (`grep -n`) and read the parts you need, don't read 2000-line files whole.
 

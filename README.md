@@ -2,9 +2,6 @@
 
 Turns the voice chat in a GoldSrc demo (CS 1.6, Condition Zero, Day of Defeat, TFC, HL Deathmatch, ...) into one `.mka` with a track per player, in sync with the demo.
 
-> [!NOTE]
-> Work in progress: being written to replace a working Rust prototype. See `TODO.md`.
-
 ## Usage
 
 ```sh
@@ -19,9 +16,11 @@ goldsrc-hltv-voice <demo.dem> [-o out.mka] [--tracks player|team|mix] [--order j
 
 Demos from a crashed server (no directory) work too.
 
+Exit codes: 0 ok (also when nobody spoke: nothing is written), 1 error, 2 usage, 3 parts of the demo couldn't be read (nothing written without `--lenient`, see the report on stderr).
+
 ## Recording voice
 
-HLTV only records the voices it can hear, and on CS it's a spectator, so normally it hears nobody. [counter-strike-podman](https://git.nnstdios.com/nnra6864/counter-strike-podman) has a small AMX Mod X plugin (`plugins/hltv_voice.sma`) that lets HLTV hear every player while players still hear only their own team. Without it, `sv_alltalk 1` (everyone hears everyone) or `3` (spectators hear everyone) also works.
+HLTV only records the voices it can hear, and on CS it's a spectator, so normally it hears nobody. [counter-strike-podman](https://git.nnstdios.com/nnra6864/counter-strike-podman) has a small AMX Mod X plugin (`plugins/hltv_voice.sma`) that lets HLTV hear every player while players still hear only their own team. Without it, `sv_alltalk 1` (everyone hears everyone) or `3` (spectators hear everyone) also works. Its image also runs this tool after every map, writing a `.mka` next to each demo.
 
 ## Building
 
@@ -31,6 +30,8 @@ Needs Zig 0.17.1 and libopus.
 zig build                 # zig-out/bin/goldsrc-hltv-voice
 zig build test
 ```
+
+The tests compare voice timing with reference output made with libopus 1.6.1. Older versions decode quiet stretches a little differently: Debian bookworm's 1.3.1 fails the speech timing test (the container builds 1.6.1 from source for that reason).
 
 # ☦
 
