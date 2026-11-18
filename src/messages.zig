@@ -1083,3 +1083,131 @@ test "DemoMessages: a bad frame is recorded and the next frames still parse" {
     try testing.expectEqual(@as(usize, 12), f.frame_len);
     try testing.expectEqual(@as(?demo.ScanProblem, null), w.frames.problem);
 }
+
+const testdata = @import("testdata.zig");
+
+/// The `dem` crate's name for a message, as in `*.messages.tsv`: `SvcXxx`
+/// compared case-insensitively without underscores (`SvcCdTrack` is
+/// `svc_cdtrack`), `user:Name` for user messages.
+fn demName(buf: []u8, m: Message) ![]const u8 {
+    return switch (m) {
+        .user => |u| std.fmt.bufPrint(buf, "user:{s}", .{u.name}),
+        .voice_data => "svcvoicedata",
+        .update_userinfo => "svcupdateuserinfo",
+        .voice_init => "svcvoiceinit",
+        .engine => |id| blk: {
+            var n: usize = 0;
+            for (id.name()) |c| {
+                if (c == '_') continue;
+                buf[n] = c;
+                n += 1;
+            }
+            break :blk buf[0..n];
+        },
+    };
+}
+
+/// Appends the `*.golden.tsv` line for `fm`, if it is a kind golden files
+/// list.
+fn writeGolden(w: *std.Io.Writer, fm: FrameMessage) !void {
+    const f = fm.frame;
+    var tbuf: [32]u8 = undefined;
+    var tw: std.Io.Writer = .fixed(&tbuf);
+    try demo.formatTime(&tw, f.time);
+    const t = tw.buffered();
+    switch (fm.message) {
+        .voice_data => |v| try w.print("voice\t{d}\t{d}\t{s}\t{d}\t{d}\t{x}\n", .{ f.entry, f.index, t, v.slot, v.data.len, v.data }),
+        .update_userinfo => |u| try w.print("userinfo\t{d}\t{d}\t{s}\t{d}\t{s}\n", .{ f.entry, f.index, t, u.slot, u.info }),
+        .voice_init => |v| try w.print("voiceinit\t{d}\t{d}\t{s}\t{s}\t{d}\n", .{ f.entry, f.index, t, v.codec, v.quality }),
+        .user => |u| if (std.mem.eql(u8, u.name, "TeamInfo")) {
+            const ti = try usermsg.TeamInfo.parse(u.data);
+            try w.print("teaminfo\t{d}\t{d}\t{s}\t{d}\t{s}\n", .{ f.entry, f.index, t, ti.entity, ti.team });
+        },
+        .engine => {},
+    }
+}
+
+test "test demos: zero failed frames, message counts and golden events" {
+    const gpa = testing.allocator;
+    for (testdata.demos) |base| {
+        const data = try testdata.readFixture(gpa, base, ".dem");
+        defer gpa.free(data);
+        const d: demo.Demo = try .open(data);
+        var w: DemoMessages = .init(gpa, d);
+        defer w.deinit();
+
+        var counts: std.StringHashMapUnmanaged(u32) = .empty;
+        defer {
+            var it = counts.keyIterator();
+            while (it.next()) |k| gpa.free(k.*);
+            counts.deinit(gpa);
+        }
+        var golden: std.Io.Writer.Allocating = .init(gpa);
+        defer golden.deinit();
+        // svc_time count of each network frame that had messages, in order.
+        var times: std.ArrayList(u8) = .empty;
+        defer times.deinit(gpa);
+        var last_frame: ?usize = null;
+
+        while (try w.next()) |fm| {
+            var name_buf: [64]u8 = undefined;
+            const name = try demName(&name_buf, fm.message);
+            const gop = try counts.getOrPut(gpa, name);
+            if (!gop.found_existing) {
+                gop.key_ptr.* = try gpa.dupe(u8, name);
+                gop.value_ptr.* = 0;
+            }
+            gop.value_ptr.* += 1;
+            try writeGolden(&golden.writer, fm);
+
+            if (last_frame != fm.frame.offset) {
+                last_frame = fm.frame.offset;
+                try times.append(gpa, 0);
+            }
+            if (fm.message == .engine and fm.message.engine == .time) times.items[times.items.len - 1] += 1;
+        }
+
+        // One svc_time per network frame (the startup frame too), except
+        // that the last frame of a finalized demo has none.
+        const last = times.items.len - 1;
+        for (times.items, 0..) |n, i| {
+            const want: u8 = if (i == last and d.directory != null) 0 else 1;
+            try testing.expectEqual(want, n);
+        }
+
+        // Zero failed frames.
+        for (w.failures.items) |f| std.debug.print("{s}: failed frame {d}/{d}: {t} at {d}\n", .{ base, f.entry, f.index, f.failure.err, f.failure.offset });
+        try testing.expectEqual(@as(usize, 0), w.failures.items.len);
+
+        // Every message type and count as in *.messages.tsv, and nothing else.
+        const tsv = try testdata.readFixture(gpa, base, ".messages.tsv");
+        defer gpa.free(tsv);
+        var rows: testdata.TsvIterator = .init(tsv);
+        var listed: usize = 0;
+        while (try rows.next()) |row| {
+            var key_buf: [64]u8 = undefined;
+            const key = if (std.mem.startsWith(u8, row[0], "user:")) row[0] else std.ascii.lowerString(&key_buf, row[0]);
+            const want = try std.fmt.parseInt(u32, row[1], 10);
+            const got = counts.get(key) orelse 0;
+            if (got != want) std.debug.print("{s}: {s}: want {d}, got {d}\n", .{ base, row[0], want, got });
+            try testing.expectEqual(want, got);
+            listed += 1;
+        }
+        try testing.expectEqual(listed, counts.count());
+
+        // Golden events, line by line in order.
+        const want_text = try testdata.readFixture(gpa, base, ".golden.tsv");
+        defer gpa.free(want_text);
+        var want_lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, want_text, "\n"), '\n');
+        var got_lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, golden.written(), "\n"), '\n');
+        var line: usize = 1;
+        while (want_lines.next()) |want| : (line += 1) {
+            const got = got_lines.next() orelse "(missing)";
+            if (!std.mem.eql(u8, want, got)) {
+                std.debug.print("{s}.golden.tsv line {d}:\n want {s}\n got  {s}\n", .{ base, line, want[0..@min(want.len, 160)], got[0..@min(got.len, 160)] });
+                return error.TestExpectedEqual;
+            }
+        }
+        try testing.expectEqual(@as(?[]const u8, null), got_lines.next());
+    }
+}

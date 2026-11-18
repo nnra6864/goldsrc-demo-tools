@@ -388,6 +388,21 @@ pub const Demo = struct {
     }
 };
 
+/// Writes a demo time with 6 decimals, like Rust's `{:.6}` (the reference
+/// tool's format): the exact value of the f32, rounded half to even, with a
+/// `-` for any negative value, even one that rounds to zero.
+pub fn formatTime(w: *std.Io.Writer, t: f32) std.Io.Writer.Error!void {
+    // 24-bit mantissa times 10^6 (= 2^6 * 15625, 14 bits) fits in an f64's
+    // 53 bits: the product is exact, and so is the rounding below.
+    const scaled = @abs(@as(f64, t)) * 1e6;
+    var units = @floor(scaled);
+    const rest = scaled - units;
+    if (rest > 0.5 or (rest == 0.5 and @mod(units, 2) == 1)) units += 1;
+    const micros: u64 = @intFromFloat(units);
+    if (std.math.signbit(t) and !std.math.isNan(t)) try w.writeByte('-');
+    try w.print("{d}.{d:0>6}", .{ micros / 1_000_000, micros % 1_000_000 });
+}
+
 const testing = std.testing;
 const testdata = @import("testdata.zig");
 
@@ -653,7 +668,7 @@ fn messageCount(gpa: std.mem.Allocator, base: []const u8, name: []const u8) !u32
     return error.MessageNotListed;
 }
 
-test "test demos iterate to the end; one network frame per SvcTime" {
+test "test demos iterate to the end; SvcTime count matches network frames" {
     const gpa = testing.allocator;
     for (testdata.demos) |base| {
         const data = try testdata.readFixture(gpa, base, ".dem");
@@ -673,15 +688,11 @@ test "test demos iterate to the end; one network frame per SvcTime" {
         }
         try testing.expectEqual(@as(u32, 0), it.unusual_types);
         try testing.expectEqual(@as(u32, 1), network[0]);
-        // HLTV puts one svc_time in every network frame of the game entry.
-        // truncated-no-directory.dem has one more svc_time than that
-        // (13632 vs 13631 frames); where it is gets pinned down by the
-        // message tests (messages.zig).
+        // One svc_time per network frame, startup frame included, except the
+        // last frame of a finalized demo (checked per frame in messages.zig).
         const svc_time = try messageCount(gpa, base, "SvcTime");
-        if (demo.directory != null)
-            try testing.expectEqual(svc_time, network[1])
-        else
-            try testing.expectEqual(svc_time, network[1] + 1);
+        const total = network[0] + network[1];
+        try testing.expectEqual(if (demo.directory != null) total - 1 else total, svc_time);
         if (demo.directory) |dir| {
             // Finalized: ends exactly where the directory starts.
             try testing.expectEqual(@as(?ScanProblem, null), it.problem);
@@ -692,5 +703,26 @@ test "test demos iterate to the end; one network frame per SvcTime" {
             try testing.expectEqual(ScanProblem.Kind.truncated, it.problem.?.kind);
             try testing.expectEqual(@as(u32, 1), next_sections);
         }
+    }
+}
+
+test "formatTime: exact value, half to even, negative zero" {
+    const cases = [_]struct { t: f32, want: []const u8 }{
+        .{ .t = 0, .want = "0.000000" },
+        .{ .t = -3.793335068280612e-08, .want = "-0.000000" },
+        .{ .t = 0.429078, .want = "0.429078" },
+        // The f32 nearest 85.6232376 is 85.62323760986328: 85.623238, not 85.623240.
+        .{ .t = 85.62323760986328, .want = "85.623238" },
+        // Exact ties go to even.
+        .{ .t = 125.0703125, .want = "125.070312" },
+        .{ .t = 0.0078125, .want = "0.007812" },
+        .{ .t = 0.0234375, .want = "0.023438" },
+        .{ .t = 1234.5, .want = "1234.500000" },
+    };
+    for (cases) |c| {
+        var buf: [64]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buf);
+        try formatTime(&w, c.t);
+        try testing.expectEqualStrings(c.want, w.buffered());
     }
 }

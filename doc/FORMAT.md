@@ -57,7 +57,7 @@ Each frame: `type u8, time f32, frame i32`, then by type:
 
 Any other type value (10..255) is read as a network frame, like types 0 and 1: `DemoFile::ReadDemoPacket` (its `default:` case) and the `dem` crate both do that. We do too and count them, since in practice it is more likely corruption. The frame's `time` is the demo time in seconds, the timeline for voice. The demo info is 436 bytes (`demo_info_t`), so the message length is at 9 + 436 + 28 bytes into a network frame (verified: walking the test demos with these sizes lands exactly on the directory offset). The length is at most 65536 (`MAX_POSSIBLE_MSG`); larger or negative is corrupt.
 
-Frames in HLTV demos (verified on the test demos): the startup entry is one network frame (type 0) and a next-section frame. The game entry is a start-time frame, then network frames (type 1), each but the last followed by a client-data frame, and a final next-section frame. Every game-entry network frame holds one `svc_time` (finalized demos: exactly as many `SvcTime` as type 1 frames; `truncated-no-directory.dem` has one `SvcTime` more than type 1 frames, not yet located).
+Frames in HLTV demos (verified on the test demos): the startup entry is one network frame (type 0) and a next-section frame. The game entry is a start-time frame, then network frames (type 1), each but the last followed by a client-data frame, and a final next-section frame. Every network frame holds one `svc_time`, the startup frame included, except the last network frame of a finalized demo, which has none (so finalized demos have one `SvcTime` fewer than network frames; a demo cut off before finalizing has as many).
 
 ## Net messages (ReHLTV `Core/src/Server.cpp`)
 
@@ -73,7 +73,8 @@ A network message frame's data is a sequence of messages: `u8 id`, then the mess
 - `svc_damage`, `svc_killedmonster`, `svc_foundsecret`: no payload, the engine never sends them. `svc_spawnstatic` (ReHLTV ignores it): engine `PF_makestatic_I` layout.
 - An unregistered user message id ends the frame (its size is unknown), as in ReHLTV. (The `dem` crate guesses a length byte.)
 - Entity lists (`svc_packetentities`, `svc_deltapacketentities`, `svc_spawnbaseline`): a delta's size depends only on the table (player table for entity numbers 1..maxclients, custom table for beams) and its field mask, not on the old values, so no entity history is needed to skip them. The instanced-baseline flag in entity headers exists only if `svc_spawnbaseline` announced instanced baselines.
-- Verified 2026-11-18: the three test demos parse with zero failed frames and the same total message count as `*.messages.tsv`.
+- Verified 2026-11-18: the three test demos parse with zero failed frames, every message type count equals `*.messages.tsv`, and every `voice`, `userinfo` and `teaminfo` line of `*.golden.tsv` is reproduced exactly.
+- Golden times are Rust `{:.6}` of the f32: its exact value rounded half to even (`125.0703125` prints `125.070312`), and `-0.000000` for tiny negative times. `demo.formatTime` does the same.
 - Message counts per test demo are in `testdata/*.messages.tsv` (from the `dem` crate): your parser must see the same numbers.
 
 ### The ones we use (verified on the test demos)
