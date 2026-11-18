@@ -641,3 +641,56 @@ test "truncated-no-directory.dem: scanned from 544 to a cut-off last frame" {
     // About 12 minutes.
     try testing.expect(last.time > 700 and last.time < 760);
 }
+
+/// Count of message `name` in `testdata/<base>.messages.tsv`.
+fn messageCount(gpa: std.mem.Allocator, base: []const u8, name: []const u8) !u32 {
+    const text = try testdata.readFixture(gpa, base, ".messages.tsv");
+    defer gpa.free(text);
+    var it: testdata.TsvIterator = .init(text);
+    while (try it.next()) |row| {
+        if (std.mem.eql(u8, row[0], name)) return std.fmt.parseInt(u32, row[1], 10);
+    }
+    return error.MessageNotListed;
+}
+
+test "test demos iterate to the end; one network frame per SvcTime" {
+    const gpa = testing.allocator;
+    for (testdata.demos) |base| {
+        const data = try testdata.readFixture(gpa, base, ".dem");
+        defer gpa.free(data);
+        const demo: Demo = try .open(data);
+        var it = demo.frames();
+        var network = [_]u32{ 0, 0 };
+        var next_sections: u32 = 0;
+        var last_time: f32 = -1;
+        while (it.next()) |f| {
+            try testing.expect(f.entry < 2);
+            if (f.type.isNetwork()) network[f.entry] += 1;
+            if (f.type == .next_section) next_sections += 1;
+            // Time never goes backwards by more than float noise.
+            try testing.expect(f.time >= last_time - 0.001);
+            last_time = f.time;
+        }
+        try testing.expectEqual(@as(u32, 0), it.unusual_types);
+        try testing.expectEqual(@as(u32, 1), network[0]);
+        // HLTV puts one svc_time in every network frame of the game entry.
+        // truncated-no-directory.dem has one more svc_time than that
+        // (13632 vs 13631 frames); where it is gets pinned down by the
+        // message tests (messages.zig).
+        const svc_time = try messageCount(gpa, base, "SvcTime");
+        if (demo.directory != null)
+            try testing.expectEqual(svc_time, network[1])
+        else
+            try testing.expectEqual(svc_time, network[1] + 1);
+        if (demo.directory) |dir| {
+            // Finalized: ends exactly where the directory starts.
+            try testing.expectEqual(@as(?ScanProblem, null), it.problem);
+            try testing.expectEqual(@as(u32, 2), next_sections);
+            try testing.expectEqual(@as(usize, @intCast(demo.header.directory_offset)), it.pos);
+            try testing.expectEqual(dir.entry(1).frame_count, @as(i32, @intCast(network[1])));
+        } else {
+            try testing.expectEqual(ScanProblem.Kind.truncated, it.problem.?.kind);
+            try testing.expectEqual(@as(u32, 1), next_sections);
+        }
+    }
+}

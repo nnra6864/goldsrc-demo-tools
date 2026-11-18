@@ -14,7 +14,7 @@ In order. One item at a time: implement, test, commit, tick it here with the dat
 - [x] Header and directory (2026-11-18)
 - [x] Frame iterator over every frame type (`doc/FORMAT.md`), yielding time, entry, frame index, and the raw net message bytes of network frames (2026-11-18)
 - [x] No directory (offset 0): scan from offset 544 to EOF; a cut-off last frame ends the scan with a warning, not an error (2026-11-18)
-- [ ] Tests: all three test demos iterate to the end; network frame counts are consistent with `*.messages.tsv` (`SvcTime` appears once per network frame in HLTV demos, check that)
+- [x] Tests: all three test demos iterate to the end; network frame counts are consistent with `*.messages.tsv` (`SvcTime` appears once per network frame in HLTV demos, check that) (2026-11-18)
 
 ## 2. Messages (`bits.zig` bit reader, `delta.zig`, `messages.zig`, `usermsg.zig`)
 
@@ -25,7 +25,7 @@ The core. Port each `Server::ParseXxx` from ReHLTV `Core/src/Server.cpp` and the
 - [ ] Every engine message 0..58, each with a unit test where a hand-built byte string is enough
 - [ ] User messages: table from `svc_newusermsg`, fixed and variable sizes
 - [ ] Per-frame error isolation: a failure stops that frame only, and is recorded (entry, frame, time, offset in the frame, message id, last message ids before it)
-- [ ] Tests: the three test demos parse with **zero** failed frames; message counts equal `*.messages.tsv`; `voice`, `userinfo`, `voiceinit`, `teaminfo` events equal `*.golden.tsv` exactly
+- [ ] Tests: the three test demos parse with **zero** failed frames; find the extra `SvcTime` in `truncated-no-directory.dem` (one more than type 1 frames, see `demo.zig` tests); message counts equal `*.messages.tsv`; `voice`, `userinfo`, `voiceinit`, `teaminfo` events equal `*.golden.tsv` exactly
 
 ## 3. Players (`players.zig`)
 
