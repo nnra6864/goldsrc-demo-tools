@@ -245,6 +245,64 @@ pub const BitReader = struct {
     }
 };
 
+/// Writes bit streams in the same layout `BitReader` reads. For building
+/// test inputs.
+pub const BitWriter = struct {
+    bytes: std.ArrayList(u8) = .empty,
+    bit: usize = 0,
+
+    pub fn deinit(w: *BitWriter, gpa: std.mem.Allocator) void {
+        w.bytes.deinit(gpa);
+    }
+
+    /// The low `n` (0..32) bits of `v`.
+    pub fn bits(w: *BitWriter, gpa: std.mem.Allocator, v: u32, n: u6) !void {
+        for (0..n) |i| {
+            if (w.bit % 8 == 0) try w.bytes.append(gpa, 0);
+            const set: u8 = @intCast((v >> @intCast(i)) & 1);
+            w.bytes.items[w.bit / 8] |= set << @intCast(w.bit % 8);
+            w.bit += 1;
+        }
+    }
+
+    pub fn bit1(w: *BitWriter, gpa: std.mem.Allocator, v: bool) !void {
+        try w.bits(gpa, @intFromBool(v), 1);
+    }
+
+    /// Sign and magnitude in `n` bits.
+    pub fn sbits(w: *BitWriter, gpa: std.mem.Allocator, v: i32, n: u6) !void {
+        try w.bit1(gpa, v < 0);
+        try w.bits(gpa, @intCast(@abs(v)), n - 1);
+    }
+
+    pub fn byte(w: *BitWriter, gpa: std.mem.Allocator, v: u8) !void {
+        try w.bits(gpa, v, 8);
+    }
+
+    pub fn short(w: *BitWriter, gpa: std.mem.Allocator, v: u16) !void {
+        try w.bits(gpa, v, 16);
+    }
+
+    pub fn long(w: *BitWriter, gpa: std.mem.Allocator, v: u32) !void {
+        try w.bits(gpa, v, 32);
+    }
+
+    /// 8-bit chars and a NUL, at any bit position.
+    pub fn string(w: *BitWriter, gpa: std.mem.Allocator, s: []const u8) !void {
+        for (s) |c| try w.byte(gpa, c);
+        try w.byte(gpa, 0);
+    }
+
+    /// Pads to a byte boundary with zero bits.
+    pub fn alignByte(w: *BitWriter) void {
+        w.bit = std.mem.alignForward(usize, w.bit, 8);
+    }
+
+    pub fn slice(w: BitWriter) []const u8 {
+        return w.bytes.items;
+    }
+};
+
 const testing = std.testing;
 
 test "ByteReader: integers are little-endian" {
@@ -412,4 +470,24 @@ test "BitReader: bit coords" {
     try testing.expectEqual(@as(f32, 0), try z.readBitCoord());
     try testing.expectEqual(@as(usize, 2), z.bit);
     try testing.expectEqual([3]f32{ 0, 0, 0 }, try z.readBitVec3Coord());
+}
+
+test "BitWriter round-trips through BitReader" {
+    const gpa = testing.allocator;
+    var w: BitWriter = .{};
+    defer w.deinit(gpa);
+    try w.bits(gpa, 5, 3);
+    try w.sbits(gpa, -100, 12);
+    try w.long(gpa, 0xdeadbeef);
+    try w.string(gpa, "x");
+    w.alignByte();
+    try w.byte(gpa, 0xab);
+    var r: BitReader = .init(w.slice());
+    try testing.expectEqual(@as(u32, 5), try r.readBits(3));
+    try testing.expectEqual(@as(i32, -100), try r.readSBits(12));
+    try testing.expectEqual(@as(u32, 0xdeadbeef), try r.readLong());
+    try r.skipBitString();
+    r.alignByte();
+    try testing.expectEqual(@as(u8, 0xab), try r.readByte());
+    try testing.expect(r.atEnd());
 }
