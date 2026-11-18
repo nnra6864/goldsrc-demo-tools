@@ -18,5 +18,5 @@ Gotchas found while working on this project. Add one whenever something about Zi
 
 - **`**` (array repetition) is gone.** `[_]u8{0} ** n` fails with "binary operator '*' has whitespace on one side". Use `var a: [n]u8 = @splat(0);`, or `@as([n]u8, @splat(0))` inside an expression. `++` still works, but an anonymous `&.{ 1, 2 } ++ x` doesn't: write `&([_]u8{ 1, 2 } ++ x)`.
 - `@cImport` is gone too (see Build system).
-- **`@intFromEnum` is now `@backingInt`** (also works on packed structs and tagged unions). `zig fmt` rewrites old calls silently, so a script that edits source by matching `@intFromEnum(...)` text after formatting won't match. `@enumFromInt` still compiles.
+- **`@intFromEnum` is now `@backingInt`** (also works on packed structs and tagged unions). `zig fmt` rewrites old calls silently, so a script that edits source by matching `@intFromEnum(...)` text after formatting won't match. Likewise `@enumFromInt` became `@fromBackingInt`.
 - `**` doesn't work on string literals either. For comptime repetition in tests: `inline fn rep(comptime c: u8, comptime n: usize) *const [n]u8 { comptime { const a: [n]u8 = @splat(c); return &a; } }`, then `"x" ++ rep(0, 16)`.
