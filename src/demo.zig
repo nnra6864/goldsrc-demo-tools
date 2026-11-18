@@ -477,17 +477,17 @@ test "header and directory of the test demos" {
     }
 }
 
-/// Builds synthetic demos for tests.
-const TestDemo = struct {
+/// Builds synthetic demos (no directory) for tests, here and in other files.
+pub const TestDemo = struct {
     buf: std.ArrayList(u8) = .empty,
 
-    fn init(gpa: std.mem.Allocator) !TestDemo {
+    pub fn init(gpa: std.mem.Allocator) !TestDemo {
         var d: TestDemo = .{};
         try d.buf.appendSlice(gpa, &testHeader(0));
         return d;
     }
 
-    fn deinit(d: *TestDemo, gpa: std.mem.Allocator) void {
+    pub fn deinit(d: *TestDemo, gpa: std.mem.Allocator) void {
         d.buf.deinit(gpa);
     }
 
@@ -497,14 +497,14 @@ const TestDemo = struct {
         try d.buf.appendSlice(gpa, &b);
     }
 
-    fn frame(d: *TestDemo, gpa: std.mem.Allocator, t: u8, time: f32, payload: []const u8) !void {
+    pub fn frame(d: *TestDemo, gpa: std.mem.Allocator, t: u8, time: f32, payload: []const u8) !void {
         try d.buf.append(gpa, t);
         try d.int(gpa, u32, @bitCast(time));
         try d.int(gpa, i32, 7);
         try d.buf.appendSlice(gpa, payload);
     }
 
-    fn network(d: *TestDemo, gpa: std.mem.Allocator, t: u8, time: f32, msgs: []const u8) !void {
+    pub fn network(d: *TestDemo, gpa: std.mem.Allocator, t: u8, time: f32, msgs: []const u8) !void {
         try d.frame(gpa, t, time, &.{});
         try d.buf.appendNTimes(gpa, 0xaa, network_info_size);
         try d.int(gpa, i32, @intCast(msgs.len));

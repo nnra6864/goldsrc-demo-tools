@@ -8,6 +8,7 @@ const std = @import("std");
 const bits = @import("bits.zig");
 const delta = @import("delta.zig");
 const usermsg = @import("usermsg.zig");
+const demo = @import("demo.zig");
 const BitReader = bits.BitReader;
 
 /// Engine message ids, protocol 48 (`svc_commands_e`). 64 and up are user
@@ -546,6 +547,71 @@ fn skipResourceList(r: *BitReader) Error!void {
     r.alignByte();
 }
 
+/// A network frame whose messages failed to parse, past the point of
+/// failure. Its later messages (possibly voice) are lost.
+pub const FrameFailure = struct {
+    entry: u32,
+    /// Index of the frame in its entry.
+    index: u32,
+    time: f32,
+    /// File offset of the frame.
+    frame_offset: usize,
+    /// Length of the frame's message data.
+    frame_len: usize,
+    failure: Failure,
+};
+
+/// A message and the frame it came from.
+pub const FrameMessage = struct {
+    frame: demo.Frame,
+    message: Message,
+};
+
+/// Walks every message of every network frame of a demo, in order. A frame
+/// that fails to parse is recorded in `failures` and the walk goes on with
+/// the next frame (per-frame error isolation).
+pub const DemoMessages = struct {
+    parser: Parser,
+    frames: demo.FrameIterator,
+    failures: std.ArrayList(FrameFailure) = .empty,
+    current: ?struct { frame: demo.Frame, messages: MessageIterator } = null,
+
+    pub fn init(gpa: std.mem.Allocator, d: demo.Demo) DemoMessages {
+        return .{ .parser = .init(gpa), .frames = d.frames() };
+    }
+
+    pub fn deinit(w: *DemoMessages) void {
+        w.failures.deinit(w.parser.gpa);
+        w.parser.deinit();
+    }
+
+    /// The next message, or null when the demo is done (then check
+    /// `failures` and `frames.problem`). Only fails on out of memory.
+    pub fn next(w: *DemoMessages) error{OutOfMemory}!?FrameMessage {
+        while (true) {
+            if (w.current) |*c| {
+                if (c.messages.next()) |maybe| {
+                    if (maybe) |msg| return .{ .frame = c.frame, .message = msg };
+                } else |err| {
+                    if (err == error.OutOfMemory) return error.OutOfMemory;
+                    try w.failures.append(w.parser.gpa, .{
+                        .entry = c.frame.entry,
+                        .index = c.frame.index,
+                        .time = c.frame.time,
+                        .frame_offset = c.frame.offset,
+                        .frame_len = c.frame.data.len,
+                        .failure = c.messages.failure.?,
+                    });
+                }
+                w.current = null;
+            }
+            const f = w.frames.next() orelse return null;
+            if (!f.type.isNetwork()) continue;
+            w.current = .{ .frame = f, .messages = w.parser.frame(f.data) };
+        }
+    }
+};
+
 const testing = std.testing;
 const BitWriter = bits.BitWriter;
 
@@ -980,4 +1046,40 @@ test "svc_deltadescription goes into the parser's tables" {
     try w.byte(gpa, 11);
     try expectBits(&p, .deltadescription, &w);
     try testing.expectEqual(@as(u8, 11), p.tables.get("event_t").?[0].bits);
+}
+
+test "DemoMessages: a bad frame is recorded and the next frames still parse" {
+    const gpa = testing.allocator;
+    var d: demo.TestDemo = try .init(gpa);
+    defer d.deinit(gpa);
+    try d.network(gpa, 0, 0, "\x01");
+    try d.frame(gpa, 5, 0, ""); // next section
+    try d.network(gpa, 1, 1.5, "\x35\x00\x01\x00A");
+    try d.frame(gpa, 4, 1.5, &@as([32]u8, @splat(0))); // client data
+    // Voice, then svc_bad: the frame fails at offset 6.
+    try d.network(gpa, 1, 2.5, "\x35\x01\x01\x00B\x01\x00\x35\x02\x01\x00C");
+    try d.network(gpa, 1, 3.5, "\x35\x03\x01\x00D");
+
+    const opened: demo.Demo = try .open(d.buf.items);
+    var w: DemoMessages = .init(gpa, opened);
+    defer w.deinit();
+    var voices: std.ArrayList(u8) = .empty;
+    defer voices.deinit(gpa);
+    while (try w.next()) |fm| switch (fm.message) {
+        .voice_data => |v| try voices.append(gpa, v.data[0]),
+        else => {},
+    };
+    // B (before the error) is seen, C (after it) is lost, D parses.
+    try testing.expectEqualStrings("ABD", voices.items);
+    try testing.expectEqual(@as(usize, 1), w.failures.items.len);
+    const f = w.failures.items[0];
+    try testing.expectEqual(@as(u32, 1), f.entry);
+    try testing.expectEqual(@as(u32, 2), f.index);
+    try testing.expectEqual(@as(f32, 2.5), f.time);
+    try testing.expectEqual(@as(usize, 6), f.failure.offset);
+    try testing.expectEqual(@as(u8, 0), f.failure.id);
+    try testing.expectEqual(error.BadMessage, f.failure.err);
+    try testing.expectEqualSlices(u8, &.{ 0x35, 0x01 }, f.failure.previousIds());
+    try testing.expectEqual(@as(usize, 12), f.frame_len);
+    try testing.expectEqual(@as(?demo.ScanProblem, null), w.frames.problem);
 }
