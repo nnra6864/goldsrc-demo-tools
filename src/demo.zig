@@ -363,6 +363,31 @@ pub const FrameIterator = struct {
     }
 };
 
+/// An opened demo: header, and directory if usable. Borrows the bytes.
+pub const Demo = struct {
+    data: []const u8,
+    header: Header,
+    /// Null when there is no usable directory; frames are then read from
+    /// `header_size` to the end of the file.
+    directory: ?Directory,
+    /// Why the directory is not used, if it isn't. `.missing` is normal for
+    /// demos that were never finalized; anything else deserves a warning.
+    directory_problem: ?DirectoryProblem,
+
+    pub fn open(data: []const u8) Error!Demo {
+        const header = try parseHeader(data);
+        return switch (parseDirectory(data, header)) {
+            .ok => |d| .{ .data = data, .header = header, .directory = d, .directory_problem = null },
+            .unusable => |p| .{ .data = data, .header = header, .directory = null, .directory_problem = p },
+        };
+    }
+
+    /// Iterates every frame from the start.
+    pub fn frames(d: Demo) FrameIterator {
+        return .init(d.data, d.directory);
+    }
+};
+
 const testing = std.testing;
 const testdata = @import("testdata.zig");
 
@@ -584,4 +609,35 @@ test "FrameIterator: bad lengths are errors" {
         try testing.expectEqual(ScanProblem.Kind.bad_length, it.problem.?.kind);
         try testing.expect(it.problem.?.isError());
     }
+}
+
+test "truncated-no-directory.dem: scanned from 544 to a cut-off last frame" {
+    const gpa = testing.allocator;
+    const data = try testdata.readFixture(gpa, "truncated-no-directory", ".dem");
+    defer gpa.free(data);
+    const demo: Demo = try .open(data);
+    try testing.expectEqual(@as(?Directory, null), demo.directory);
+    try testing.expectEqual(@as(?DirectoryProblem, .missing), demo.directory_problem);
+
+    var it = demo.frames();
+    var first: ?Frame = null;
+    var last: Frame = undefined;
+    var per_entry = [_]u32{ 0, 0 };
+    while (it.next()) |f| {
+        if (first == null) first = f;
+        last = f;
+        try testing.expect(f.entry < 2);
+        per_entry[f.entry] += 1;
+    }
+    try testing.expectEqual(@as(usize, header_size), first.?.offset);
+    // Startup: one network frame and the next-section frame.
+    try testing.expectEqual(@as(u32, 2), per_entry[0]);
+    const p = it.problem.?;
+    try testing.expectEqual(ScanProblem.Kind.truncated, p.kind);
+    try testing.expect(!p.isError());
+    try testing.expectEqual(@as(u32, 1), p.entry);
+    try testing.expectEqual(per_entry[1], p.index);
+    try testing.expect(p.offset > last.offset and p.offset < data.len);
+    // About 12 minutes.
+    try testing.expect(last.time > 700 and last.time < 760);
 }
