@@ -62,6 +62,8 @@ The core. Port each `Server::ParseXxx` from ReHLTV `Core/src/Server.cpp` and the
 
 ## 8. Demo tools (owner, 2026-11-19: a full replacement, more than voice)
 
+- [x] Voice placement by sequence number: a packet that continues a stream follows straight on, lost frames filled in exactly, a stream over 1 s behind arrival starts again (2026-11-19: the Rust tool left 306 ms of silence inside speech in `one-player.dem`, a burst of 18 frames the network held back; gone, no other change on any test or archive demo)
+
 - [x] Rename to goldsrc-demo-tools, subcommands; `voice` is the old CLI (2026-11-19)
 - [x] `info`: map, duration, directory, end, players who joined (HLTV skipped; without a SteamID counted apart), `key value` lines, so the server can delete demos nobody joined (2026-11-19; 4 of the 9 archive demos had nobody, one of them 16.6 h)
 - [x] `repair`: finish a demo cut off by a crash or kill (drop a cut-off last frame, write the last frame and the directory) so the game plays it (2026-11-19: byte-identical to HLTV on the test demos; the 6 unfinished archive demos repair, read the same in our parser and the Rust prototype, and ReHLTV `playdemo` reads their directory without the "bogus" warning)

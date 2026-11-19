@@ -1,6 +1,8 @@
 //! Places decoded voice on per-track timelines (DESIGN.md "Timeline").
-//! Each packet lands at its frame's demo time, or right after the player's
-//! previous audio if that would overlap (packets arrive in bursts).
+//! A packet that continues the player's stream (its sequence numbers follow
+//! on) lands right after their previous audio, whenever it arrived: speech
+//! stays continuous however the network delayed it. A new stream lands at its
+//! frame's demo time, or after the previous audio if that would overlap.
 
 const std = @import("std");
 const players = @import("players.zig");
@@ -35,6 +37,12 @@ pub const Report = struct {
 pub fn length(duration: f32) usize {
     return @intFromFloat((@as(f64, @max(duration, 0)) + 1.0) * sample_rate);
 }
+
+/// How far a stream's audio may fall behind its packets' arrival before the
+/// next packet starts it again at its arrival time (1 s). Network jitter is
+/// well under this; it catches a client whose clock runs a little fast over
+/// a long open mic, so the voice can't drift off the demo.
+const max_lag = sample_rate;
 
 /// Sample index for demo time `t`.
 fn sampleAt(t: f32) usize {
@@ -104,7 +112,8 @@ const PlayerState = struct {
                     continue;
                 },
             };
-            s.at = @max(sampleAt(pkt.time), s.cursor);
+            const arrived = sampleAt(pkt.time);
+            s.at = if (s.dec.continued and arrived <= s.cursor + max_lag) s.cursor else @max(arrived, s.cursor);
             s.cursor = s.at + s.pending.items.len;
         }
     }
@@ -232,58 +241,106 @@ fn fakePlayer(gpa: std.mem.Allocator, name: []const u8) !players.Player {
     return .{ .name = try gpa.dupe(u8, name), .steamid = try gpa.dupe(u8, ""), .joined = 0 };
 }
 
-test "addPlayer: overlap pushes back, gaps stay silent, lost packets reported" {
-    const gpa = testing.allocator;
-    // Placement is only visible with real audio: encode a tone.
+/// Encodes one 20 ms frame of a tone, clearly non-silent once decoded.
+fn toneFrame(out: []u8) ![]u8 {
     var enc: opus.Encoder = try .init(sample_rate, 48000);
     defer enc.deinit();
     var tone: [steamvoice.frame_samples]f32 = undefined;
     for (&tone, 0..) |*x, i| x.* = 0.5 * @sin(@as(f32, @floatFromInt(i)) * 0.3);
-    var frame_buf: [256]u8 = undefined;
     // Warm up so the frame decodes to clearly non-silent audio.
-    _ = try enc.encode(&tone, &frame_buf);
-    const flen = try enc.encode(&tone, &frame_buf);
+    _ = try enc.encode(&tone, out);
+    return out[0..try enc.encode(&tone, out)];
+}
 
-    var pkts: [3][512]u8 = undefined;
+/// A Steam voice packet in `b` with one Opus frame of sequence `seq`.
+fn tonePacket(b: *[512]u8, frame: []const u8, seq: u16) []const u8 {
+    std.mem.writeInt(u64, b[0..8], 76561199487820327, .little);
+    b[8] = 0x06;
+    std.mem.writeInt(u16, b[9..11], @intCast(4 + frame.len), .little);
+    std.mem.writeInt(u16, b[11..13], @intCast(frame.len), .little);
+    std.mem.writeInt(u16, b[13..15], seq, .little);
+    @memcpy(b[15..][0..frame.len], frame);
+    const n = 15 + frame.len;
+    std.mem.writeInt(u32, b[n..][0..4], std.hash.Crc32.hash(b[0..n]), .little);
+    return b[0 .. n + 4];
+}
+
+/// Places one-frame packets with sequence numbers `seqs` arriving at `times`
+/// (plus garbage at `junk_at`), and returns the speech intervals. Caller
+/// frees.
+fn placeTones(gpa: std.mem.Allocator, seqs: []const u16, times: []const f32, junk_at: f32, report: *Report) ![]Interval {
+    var fbuf: [256]u8 = undefined;
+    const frame = try toneFrame(&fbuf);
+    var bufs: [8][512]u8 = undefined;
     var pl = try fakePlayer(gpa, "p");
     defer {
         gpa.free(pl.name);
         gpa.free(pl.steamid);
         pl.packets.deinit(gpa);
     }
-    // Two packets in the same frame at t=1 (seq 0, 1), one at t=2 (seq 2),
-    // and garbage at t=3.
-    for (0..3) |k| {
-        const b = &pkts[k];
-        std.mem.writeInt(u64, b[0..8], 76561199487820327, .little);
-        b[8] = 0x06;
-        std.mem.writeInt(u16, b[9..11], @intCast(4 + flen), .little);
-        std.mem.writeInt(u16, b[11..13], @intCast(flen), .little);
-        std.mem.writeInt(u16, b[13..15], @intCast(k), .little);
-        @memcpy(b[15..][0..flen], frame_buf[0..flen]);
-        const n = 15 + flen;
-        std.mem.writeInt(u32, b[n..][0..4], std.hash.Crc32.hash(b[0..n]), .little);
-        try pl.packets.append(gpa, .{ .time = if (k < 2) 1 else 2, .data = b[0 .. n + 4] });
-    }
-    try pl.packets.append(gpa, .{ .time = 3, .data = "junk" });
-
-    const pcm = try gpa.alloc(f32, length(3));
+    for (seqs, times, 0..) |seq, t, k| try pl.packets.append(gpa, .{ .time = t, .data = tonePacket(&bufs[k], frame, seq) });
+    try pl.packets.append(gpa, .{ .time = junk_at, .data = "junk" });
+    const pcm = try gpa.alloc(f32, length(junk_at));
     defer gpa.free(pcm);
     @memset(pcm, 0);
+    try addPlayer(gpa, pcm, &pl, report);
+    return speechIntervals(gpa, pcm, sample_rate, -45, 0.4);
+}
+
+test "addPlayer: a stream stays continuous however late its packets come, lost packets reported" {
+    const gpa = testing.allocator;
     var report: Report = .{};
     defer report.deinit(gpa);
-    try addPlayer(gpa, pcm, &pl, &report);
-
-    const iv = try speechIntervals(gpa, pcm, sample_rate, -45, 0.4);
+    // seq 0 and 1 in the same frame at t=1, seq 2 a second late (network
+    // jitter): it still follows straight on. Then a new stream (seq 0 again)
+    // at t=2.5, which starts at its arrival.
+    const iv = try placeTones(gpa, &.{ 0, 1, 2, 0 }, &.{ 1, 1, 1.9, 2.5 }, 3, &report);
     defer gpa.free(iv);
-    // Burst at 1.00..1.04 (second packet pushed after the first), then 2.00..2.02.
     try testing.expectEqual(@as(usize, 2), iv.len);
     try testing.expectApproxEqAbs(@as(f64, 1.0), iv[0].start, 0.005);
-    try testing.expectApproxEqAbs(@as(f64, 1.04), iv[0].end, 0.005);
-    try testing.expectApproxEqAbs(@as(f64, 2.0), iv[1].start, 0.005);
+    try testing.expectApproxEqAbs(@as(f64, 1.06), iv[0].end, 0.005);
+    try testing.expectApproxEqAbs(@as(f64, 2.5), iv[1].start, 0.005);
+    try testing.expectApproxEqAbs(@as(f64, 2.52), iv[1].end, 0.005);
     try testing.expectEqual(@as(usize, 1), report.lost.items.len);
     try testing.expectEqual(@as(f32, 3), report.lost.items[0].time);
     try testing.expectEqual(error.NotSteamVoice, report.lost.items[0].err);
+}
+
+test "addPlayer: a lost packet is filled in, a stream over a second behind starts again" {
+    const gpa = testing.allocator;
+    var report: Report = .{};
+    defer report.deinit(gpa);
+    // seq 1 lost: concealed, so seq 2 lands 40 ms after seq 0 started. seq 3
+    // arrives 1.5 s after its place (beyond max_lag): it starts again there.
+    const iv = try placeTones(gpa, &.{ 0, 2, 3 }, &.{ 1, 1.02, 2.6 }, 3, &report);
+    defer gpa.free(iv);
+    try testing.expectEqual(@as(usize, 2), iv.len);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), iv[0].start, 0.005);
+    try testing.expectApproxEqAbs(@as(f64, 1.06), iv[0].end, 0.025);
+    try testing.expectApproxEqAbs(@as(f64, 2.6), iv[1].start, 0.005);
+    try testing.expectEqual(@as(u32, 1), report.concealed);
+}
+
+/// Where we deliberately differ from the Rust tool's output: an interval end
+/// it got wrong, and why.
+const Deviation = struct { base: []const u8, interval: usize, end: f64 };
+const deviations = [_]Deviation{
+    // At 44.281 s one packet brought 18 frames (seq 35..52) that the network
+    // held back for 430 ms. They continue the stream, so they follow straight
+    // on; the Rust tool put them at their arrival, leaving 306 ms of silence
+    // inside the speech, and the rest of the interval that much later.
+    .{ .base = "one-player", .interval = 0, .end = 45.896 },
+};
+
+/// Longest run of exact zeros (digital silence) in `pcm[from..to]`, in seconds.
+fn longestZeroRun(pcm: []const f32, from: f64, to: f64) f64 {
+    var best: usize = 0;
+    var run: usize = 0;
+    for (pcm[sampleAt(@floatCast(from))..sampleAt(@floatCast(to))]) |x| {
+        run = if (x == 0) run + 1 else 0;
+        best = @max(best, run);
+    }
+    return @as(f64, @floatFromInt(best)) / sample_rate;
 }
 
 test "test demos: speech lands where the Rust tool put it (within 20 ms)" {
@@ -321,7 +378,10 @@ test "test demos: speech lands where the Rust tool put it (within 20 ms)" {
         var i: usize = 0;
         while (try rows.next()) |row| : (i += 1) {
             const start = try std.fmt.parseFloat(f64, row[0]);
-            const end = try std.fmt.parseFloat(f64, row[1]);
+            var end = try std.fmt.parseFloat(f64, row[1]);
+            for (deviations) |dv| {
+                if (std.mem.eql(u8, dv.base, base) and dv.interval == i) end = dv.end;
+            }
             if (i >= got.len) return error.TestMissingInterval;
             if (@abs(got[i].start - start) > 0.02 or @abs(got[i].end - end) > 0.02)
                 std.debug.print("{s} interval {d}: want {d:.3}..{d:.3}, got {d:.3}..{d:.3}\n", .{ base, i, start, end, got[i].start, got[i].end });
@@ -329,6 +389,11 @@ test "test demos: speech lands where the Rust tool put it (within 20 ms)" {
             try testing.expectApproxEqAbs(end, got[i].end, 0.02);
         }
         try testing.expectEqual(i, got.len);
+
+        // The burst the network held back follows straight on: no digital
+        // silence inside that speech (the Rust tool's output has 306 ms).
+        if (std.mem.eql(u8, base, "one-player"))
+            try testing.expect(longestZeroRun(pcm, 43.9, 44.3) < 0.04);
     }
 }
 

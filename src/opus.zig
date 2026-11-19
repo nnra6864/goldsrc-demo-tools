@@ -9,8 +9,13 @@ const steamvoice = @import("steamvoice.zig");
 pub const max_frame_samples_48k = 5760;
 
 /// Lost frames concealed with Opus PLC per gap; the rest of a longer gap
-/// stays silent.
+/// is silence.
 pub const max_concealed_frames = 10;
+
+/// Longest gap in a stream's sequence numbers (5 s) still treated as lost
+/// frames. A longer jump is a new stream: Steam starts each burst of speech
+/// at sequence 0, so a jump this long isn't loss within one.
+pub const max_gap_frames = 250;
 
 pub const Error = error{
     /// libopus failed to create a decoder or encoder.
@@ -104,8 +109,13 @@ pub const VoiceDecoder = struct {
     next_seq: ?u16 = null,
     /// Frames concealed so far.
     concealed: u32 = 0,
-    /// Times a sequence went backwards (a new stream).
+    /// Times a sequence went backwards or jumped (a new stream).
     restarts: u32 = 0,
+    /// Whether the last decoded packet's audio follows straight on from the
+    /// packet before: its first frame continues the same stream (nothing
+    /// lost, or lost frames filled in). The timeline then places it right
+    /// after the previous audio instead of at its arrival time.
+    continued: bool = false,
 
     pub const DecodeError = Error || error{
         /// A sample rate chunk other than 24000.
@@ -133,43 +143,55 @@ pub const VoiceDecoder = struct {
     pub fn decode(v: *VoiceDecoder, gpa: std.mem.Allocator, packet: steamvoice.Packet, out: *std.ArrayList(f32)) DecodeError!void {
         const start = out.items.len;
         errdefer out.shrinkRetainingCapacity(start);
+        v.continued = false;
+        var first = true;
         var chunks = packet.chunks();
         while (chunks.next()) |chunk| switch (chunk) {
             .sample_rate => |r| if (r != steamvoice.sample_rate) return error.UnsupportedSampleRate,
             .unknown_0a => {},
-            .silence => |n| try out.appendNTimes(gpa, 0, n),
+            .silence => |n| {
+                first = false;
+                try out.appendNTimes(gpa, 0, n);
+            },
             .silk => return error.UnsupportedSilk,
-            .opus_plc => |data| try v.opusFrames(gpa, data, out),
+            .opus_plc => |data| try v.opusFrames(gpa, data, out, &first),
         };
     }
 
-    fn opusFrames(v: *VoiceDecoder, gpa: std.mem.Allocator, chunk: []const u8, out: *std.ArrayList(f32)) DecodeError!void {
+    fn opusFrames(v: *VoiceDecoder, gpa: std.mem.Allocator, chunk: []const u8, out: *std.ArrayList(f32), first: *bool) DecodeError!void {
         var buf: [max_frame_samples_48k]f32 = undefined;
         var frames: steamvoice.OpusFrames = .init(chunk);
         while (frames.next()) |entry| {
             const f = switch (entry) {
                 .reset => {
                     v.reset();
+                    first.* = false;
                     continue;
                 },
                 .frame => |f| f,
             };
+            var same_stream = false;
             if (v.next_seq) |expected| {
                 const lost = f.seq -% expected;
-                if (lost > 0x8000) {
-                    // Went backwards: a new stream.
+                if (lost > max_gap_frames) {
+                    // Went backwards, or jumped too far for loss: a new stream.
                     v.reset();
                     v.restarts += 1;
-                } else if (lost > 0) {
-                    // Conceal a short loss, 20 ms per lost frame; the rest of
-                    // a long one is silence (left to the timeline).
+                } else {
+                    same_stream = true;
+                    // Lost frames, 20 ms each: a short loss concealed, the
+                    // rest of a long one silence.
                     for (0..@min(lost, max_concealed_frames)) |_| {
                         const n = try v.opus.conceal(buf[0..steamvoice.frame_samples]);
                         try out.appendSlice(gpa, buf[0..n]);
                         v.concealed += 1;
                     }
+                    if (lost > max_concealed_frames)
+                        try out.appendNTimes(gpa, 0, (lost - max_concealed_frames) * steamvoice.frame_samples);
                 }
             }
+            if (first.*) v.continued = same_stream;
+            first.* = false;
             v.next_seq = f.seq +% 1;
             if (f.data.len == 0) continue;
             const n = try v.opus.decode(f.data, &buf);
@@ -238,18 +260,29 @@ test "VoiceDecoder: frames, gaps, wraparound, resets" {
     // Gap of 3 lost frames (seq 1, 2, 3): concealed, 20 ms each.
     try testing.expectEqual(@as(usize, 4 * fs), try decodeAll(&v, buildPacket(&buf, &.{frames[2]}, &.{4})));
     try testing.expectEqual(@as(u32, 3), v.concealed);
-    // A long gap: only 10 frames concealed.
-    try testing.expectEqual(@as(usize, 11 * fs), try decodeAll(&v, buildPacket(&buf, &.{frames[3]}, &.{1000})));
+    try testing.expect(v.continued);
+    // A long gap (seq 5..104 lost): 10 frames concealed, the other 90 silence,
+    // so the frame after it lands 100 frames later.
+    const out_len = try decodeAll(&v, buildPacket(&buf, &.{frames[3]}, &.{105}));
+    try testing.expectEqual(@as(usize, 101 * fs), out_len);
     try testing.expectEqual(@as(u32, 13), v.concealed);
+    try testing.expect(v.continued);
+    // A jump over 5 s: a new stream, nothing filled in.
+    try testing.expectEqual(@as(usize, fs), try decodeAll(&v, buildPacket(&buf, &.{frames[0]}, &.{1000})));
+    try testing.expectEqual(@as(u32, 1), v.restarts);
+    try testing.expect(!v.continued);
     // Backwards: a new stream, nothing concealed.
     try testing.expectEqual(@as(usize, fs), try decodeAll(&v, buildPacket(&buf, &.{frames[0]}, &.{5})));
-    try testing.expectEqual(@as(u32, 1), v.restarts);
+    try testing.expectEqual(@as(u32, 2), v.restarts);
+    try testing.expect(!v.continued);
     // A reset entry forgets the sequence: a jump after it is no gap.
     try testing.expectEqual(@as(usize, fs), try decodeAll(&v, buildPacket(&buf, &.{ null, frames[1] }, &.{ 0, 500 })));
     try testing.expectEqual(@as(u32, 13), v.concealed);
+    try testing.expect(!v.continued);
     // Empty frames advance the sequence without audio.
     try testing.expectEqual(@as(usize, fs), try decodeAll(&v, buildPacket(&buf, &.{ "", frames[2] }, &.{ 501, 502 })));
     try testing.expectEqual(@as(u32, 13), v.concealed);
+    try testing.expect(v.continued);
 }
 
 test "VoiceDecoder: a bad frame loses the whole packet" {
