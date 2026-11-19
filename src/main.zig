@@ -1,5 +1,5 @@
-//! goldsrc-hltv-voice: writes the voice chat of a GoldSrc demo to a .mka,
-//! one Opus track per player (DESIGN.md "CLI").
+//! goldsrc-demo-tools: tools for GoldSrc demos (DESIGN.md "CLI"). `voice`
+//! writes the voice chat to a .mka, one Opus track per player.
 
 const std = @import("std");
 const demo = @import("demo.zig");
@@ -10,7 +10,10 @@ const mka = @import("mka.zig");
 const dump = @import("dump.zig");
 
 pub const usage =
-    \\usage: goldsrc-hltv-voice <demo.dem> [-o out.mka] [--tracks player|team|mix] [--order join|team] [--dump] [--lenient]
+    \\usage: goldsrc-demo-tools <command> <demo.dem> [options]
+    \\
+    \\  voice <demo.dem> [-o out.mka] [--tracks player|team|mix] [--order join|team] [--dump] [--lenient]
+    \\      the voice chat as a .mka, one Opus track per player
     \\
 ;
 
@@ -23,7 +26,8 @@ pub const Exit = enum(u8) {
     partial = 3,
 };
 
-pub const Options = struct {
+/// Options of `voice`.
+pub const VoiceOptions = struct {
     demo: []const u8,
     out: ?[]const u8 = null,
     tracks: players.TrackMode = .player,
@@ -32,9 +36,9 @@ pub const Options = struct {
     lenient: bool = false,
 };
 
-/// Parses arguments (without the program name). Null means usage error.
-pub fn parseArgs(args: []const []const u8) ?Options {
-    var o: Options = .{ .demo = "" };
+/// Parses `voice`'s arguments (after the command). Null means usage error.
+pub fn parseVoiceArgs(args: []const []const u8) ?VoiceOptions {
+    var o: VoiceOptions = .{ .demo = "" };
     var have_demo = false;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
@@ -140,17 +144,22 @@ fn report(w: *std.Io.Writer, d: demo.Demo, walk: *const messages.DemoMessages, r
 /// Runs the tool. `args` excludes the program name. Output for the user on
 /// `out`, diagnostics on `err`.
 pub fn run(gpa: std.mem.Allocator, io: std.Io, args: []const []const u8, out: *std.Io.Writer, err: *std.Io.Writer) !Exit {
-    const o = parseArgs(args) orelse {
-        try err.writeAll(usage);
-        return .usage;
-    };
+    if (args.len != 0 and std.mem.eql(u8, args[0], "voice")) {
+        if (parseVoiceArgs(args[1..])) |o| return runVoice(gpa, io, o, out, err);
+    }
+    try err.writeAll(usage);
+    return .usage;
+}
+
+/// `voice`: the .mka.
+fn runVoice(gpa: std.mem.Allocator, io: std.Io, o: VoiceOptions, out: *std.Io.Writer, err: *std.Io.Writer) !Exit {
     const data = std.Io.Dir.cwd().readFileAlloc(io, o.demo, gpa, .unlimited) catch |e| {
-        try err.print("goldsrc-hltv-voice: {s}: {t}\n", .{ o.demo, e });
+        try err.print("goldsrc-demo-tools: {s}: {t}\n", .{ o.demo, e });
         return .err;
     };
     defer gpa.free(data);
     const d = demo.Demo.open(data) catch {
-        try err.print("goldsrc-hltv-voice: {s}: not a GoldSrc demo\n", .{o.demo});
+        try err.print("goldsrc-demo-tools: {s}: not a GoldSrc demo\n", .{o.demo});
         return .err;
     };
 
@@ -173,7 +182,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, args: []const []const u8, out: *s
     defer gpa.free(track_list);
     defer players.freeTracks(gpa, track_list);
     if (track_list.len > mka.max_tracks) {
-        try err.print("goldsrc-hltv-voice: {d} tracks, at most {d} supported\n", .{ track_list.len, mka.max_tracks });
+        try err.print("goldsrc-demo-tools: {d} tracks, at most {d} supported\n", .{ track_list.len, mka.max_tracks });
         return .err;
     }
 
@@ -205,7 +214,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, args: []const []const u8, out: *s
 
     const partial = try report(err, d, &walk, &rendered);
     if (partial and !o.lenient) {
-        try err.writeAll("goldsrc-hltv-voice: parts of the demo could not be read, nothing written (--lenient writes anyway)\n");
+        try err.writeAll("goldsrc-demo-tools: parts of the demo could not be read, nothing written (--lenient writes anyway)\n");
         return .partial;
     }
     if (track_list.len == 0) {
@@ -217,7 +226,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, args: []const []const u8, out: *s
     const out_path = if (o.out) |p| try gpa.dupe(u8, p) else try defaultOutput(gpa, o.demo);
     defer gpa.free(out_path);
     writeFile(gpa, io, out_path, stem(o.demo), @as(f64, @floatFromInt(len)) * 1000 / timeline.sample_rate, encoded.items) catch |e| {
-        try err.print("goldsrc-hltv-voice: {s}: {t}\n", .{ out_path, e });
+        try err.print("goldsrc-demo-tools: {s}: {t}\n", .{ out_path, e });
         return .err;
     };
     for (track_list) |t| try out.print("{s}\n", .{t.title});
@@ -244,7 +253,7 @@ pub fn main(init: std.process.Init) !u8 {
     var out = std.Io.File.stdout().writer(init.io, &out_buf);
     var err = std.Io.File.stderr().writer(init.io, &err_buf);
     const code = run(init.gpa, init.io, args[1..], &out.interface, &err.interface) catch |e| blk: {
-        err.interface.print("goldsrc-hltv-voice: {t}\n", .{e}) catch {};
+        err.interface.print("goldsrc-demo-tools: {t}\n", .{e}) catch {};
         break :blk Exit.err;
     };
     out.interface.flush() catch {};
@@ -272,16 +281,16 @@ test {
 const testing = std.testing;
 const testdata = @import("testdata.zig");
 
-test "parseArgs" {
-    const o = parseArgs(&.{ "x.dem", "-o", "y.mka", "--tracks", "team", "--order", "team", "--lenient" }).?;
+test "parseVoiceArgs" {
+    const o = parseVoiceArgs(&.{ "x.dem", "-o", "y.mka", "--tracks", "team", "--order", "team", "--lenient" }).?;
     try testing.expectEqualStrings("x.dem", o.demo);
     try testing.expectEqualStrings("y.mka", o.out.?);
     try testing.expectEqual(players.TrackMode.team, o.tracks);
     try testing.expectEqual(players.Order.team, o.order);
     try testing.expect(o.lenient and !o.dump);
-    try testing.expect(parseArgs(&.{"x.dem"}).?.tracks == .player);
+    try testing.expect(parseVoiceArgs(&.{"x.dem"}).?.tracks == .player);
     for ([_][]const []const u8{ &.{}, &.{"-h"}, &.{ "a", "b" }, &.{ "a", "-o" }, &.{ "a", "--tracks", "x" }, &.{ "a", "--order" }, &.{ "a", "--bogus" } }) |bad|
-        try testing.expectEqual(@as(?Options, null), parseArgs(bad));
+        try testing.expectEqual(@as(?VoiceOptions, null), parseVoiceArgs(bad));
 }
 
 test "defaultOutput and stem" {
@@ -328,7 +337,12 @@ test "cli: usage and missing files" {
     var r = try cli(gpa, &.{});
     defer r.deinit();
     try testing.expectEqual(Exit.usage, r.code);
-    var r2 = try cli(gpa, &.{"/nonexistent/x.dem"});
+    for ([_][]const []const u8{ &.{"x.dem"}, &.{"bogus"}, &.{ "bogus", "x.dem" }, &.{"voice"} }) |bad| {
+        var b = try cli(gpa, bad);
+        defer b.deinit();
+        try testing.expectEqual(Exit.usage, b.code);
+    }
+    var r2 = try cli(gpa, &.{ "voice", "/nonexistent/x.dem" });
     defer r2.deinit();
     try testing.expectEqual(Exit.err, r2.code);
 }
@@ -342,13 +356,13 @@ test "cli: writes a .mka the reference way, and --dump writes nothing" {
     var out_buf: [512]u8 = undefined;
     const tmp_path = try std.fmt.bufPrint(&out_buf, ".zig-cache/tmp/{s}/out.mka", .{tmp.sub_path});
 
-    var d = try cli(gpa, &.{ demo_path, "--dump", "-o", tmp_path });
+    var d = try cli(gpa, &.{ "voice", demo_path, "--dump", "-o", tmp_path });
     defer d.deinit();
     try testing.expectEqual(Exit.ok, d.code);
     try testing.expect(std.mem.startsWith(u8, d.out.written(), "codec: \"(no svc_voiceinit)\", duration 211.1s\nT     nnra "));
     try testing.expectError(error.FileNotFound, tmp.dir.access(testing.io, "out.mka", .{}));
 
-    var r = try cli(gpa, &.{ demo_path, "--order", "team", "-o", tmp_path });
+    var r = try cli(gpa, &.{ "voice", demo_path, "--order", "team", "-o", tmp_path });
     defer r.deinit();
     try testing.expectEqual(Exit.ok, r.code);
     try testing.expectEqualStrings("", r.err.written());
@@ -361,7 +375,7 @@ test "cli: writes a .mka the reference way, and --dump writes nothing" {
 test "cli: no voice exits 0 and writes nothing; the cut-off last frame is only a warning" {
     const gpa = testing.allocator;
     var path_buf: [512]u8 = undefined;
-    var r = try cli(gpa, &.{try fixturePath(&path_buf, "truncated-no-directory")});
+    var r = try cli(gpa, &.{ "voice", try fixturePath(&path_buf, "truncated-no-directory") });
     defer r.deinit();
     try testing.expectEqual(Exit.ok, r.code);
     try testing.expectEqualStrings("", r.out.written());
@@ -393,14 +407,14 @@ test "cli: a corrupt frame makes the run partial; --lenient writes anyway" {
 
     var path_buf: [512]u8 = undefined;
     const bad_path = try std.fmt.bufPrint(&path_buf, ".zig-cache/tmp/{s}/bad.dem", .{tmp.sub_path});
-    var r = try cli(gpa, &.{bad_path});
+    var r = try cli(gpa, &.{ "voice", bad_path });
     defer r.deinit();
     try testing.expectEqual(Exit.partial, r.code);
     try testing.expect(std.mem.indexOf(u8, r.err.written(), "svc_bad (id 0) at byte 0") != null);
     try testing.expect(std.mem.indexOf(u8, r.err.written(), "nothing written") != null);
     try testing.expectError(error.FileNotFound, tmp.dir.access(testing.io, "bad.mka", .{}));
 
-    var l = try cli(gpa, &.{ bad_path, "--lenient" });
+    var l = try cli(gpa, &.{ "voice", bad_path, "--lenient" });
     defer l.deinit();
     try testing.expectEqual(Exit.partial, l.code);
     try tmp.dir.access(testing.io, "bad.mka", .{});

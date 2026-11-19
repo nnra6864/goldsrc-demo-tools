@@ -1,11 +1,11 @@
-# goldsrc-hltv-voice
+# goldsrc-demo-tools
 
-Turns the voice chat in a GoldSrc demo (CS 1.6, Condition Zero, Day of Defeat, TFC, HL Deathmatch, ...) into one `.mka` with a track per player, in sync with the demo.
+Tools for GoldSrc demos (CS 1.6, Condition Zero, Day of Defeat, TFC, HL Deathmatch, ...). `voice` turns the voice chat into one `.mka` with a track per player, in sync with the demo.
 
 ## Usage
 
 ```sh
-goldsrc-hltv-voice <demo.dem> [-o out.mka] [--tracks player|team|mix] [--order join|team] [--dump] [--lenient]
+goldsrc-demo-tools voice <demo.dem> [-o out.mka] [--tracks player|team|mix] [--order join|team] [--dump] [--lenient]
 ```
 
 - One track per player, named after them, with their SteamID as a tag. A player who rejoins, even in another slot, continues their own track
@@ -27,7 +27,7 @@ HLTV only records the voices it can hear, and on CS it's a spectator, so normall
 Needs Zig 0.17.1 and libopus.
 
 ```sh
-zig build                 # zig-out/bin/goldsrc-hltv-voice
+zig build                 # zig-out/bin/goldsrc-demo-tools
 zig build test
 ```
 

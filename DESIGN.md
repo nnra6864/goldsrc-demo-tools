@@ -2,7 +2,7 @@
 
 ## Goal
 
-`goldsrc-hltv-voice demo.dem` writes `demo.mka`: one Opus track per player who spoke, each placed at the right time over the whole demo, so the `.mka` plays in sync with the demo from the start.
+`goldsrc-demo-tools voice demo.dem` writes `demo.mka`: one Opus track per player who spoke, each placed at the right time over the whole demo, so the `.mka` plays in sync with the demo from the start.
 
 What matters, in order:
 
@@ -20,10 +20,11 @@ GoldSrc net messages carry no length. To reach a `svc_voicedata` you have to par
 ## CLI
 
 ```
-goldsrc-hltv-voice <demo.dem> [-o out.mka] [--tracks player|team|mix] [--order join|team] [--dump] [--lenient]
+goldsrc-demo-tools <command> <demo.dem> [options]
+goldsrc-demo-tools voice <demo.dem> [-o out.mka] [--tracks player|team|mix] [--order join|team] [--dump] [--lenient]
 ```
 
-Same flags and behaviour as the Rust prototype, plus `--lenient`.
+The tool replaces the Rust prototype fully (owner, 2026-11-19), including what the server needs around demos, so it has subcommands. `voice` has the prototype's flags and behaviour, plus `--lenient`; its options are below.
 
 - `-o`: output path. Default: the demo path with `.mka`.
 - `--tracks player` (default): a track per player. `team`: one per starting team (T, CT, Other). `mix`: one track.
@@ -71,6 +72,6 @@ Memory: a demo is read whole into memory (they're a few MB, at most a few hundre
 ## Non-goals
 
 - Playing or rendering demos, or anything about entities beyond skipping them correctly.
-- Writing demos.
+- Writing demos, except finishing one that was cut off (`repair`).
 - Codecs other than Steam voice (Opus). Old Speex/Miles (non-Steam clients) and SILK are reported as unsupported, not decoded. Might come later if a real demo needs it.
 - Windows/macOS for now.

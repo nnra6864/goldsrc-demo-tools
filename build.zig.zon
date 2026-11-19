@@ -1,7 +1,7 @@
 .{
-    .name = .goldsrc_hltv_voice,
+    .name = .goldsrc_demo_tools,
     .version = "0.0.1",
     .minimum_zig_version = "0.17.1",
     .paths = .{""},
-    .fingerprint = 0x7950866d08add41e,
+    .fingerprint = 0x537ca5e9b63f66ee,
 }

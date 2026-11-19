@@ -27,7 +27,7 @@ pub fn build(b: *std.Build) void {
     root_module.addOptions("build_options", options);
 
     const exe = b.addExecutable(.{
-        .name = "goldsrc-hltv-voice",
+        .name = "goldsrc-demo-tools",
         .root_module = root_module,
     });
     b.installArtifact(exe);
@@ -35,7 +35,7 @@ pub fn build(b: *std.Build) void {
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     run_cmd.addPassthruArgs();
-    const run_step = b.step("run", "Run goldsrc-hltv-voice (zig build run -- args)");
+    const run_step = b.step("run", "Run goldsrc-demo-tools (zig build run -- args)");
     run_step.dependOn(&run_cmd.step);
 
     // One test binary for the whole tree: src/main.zig references every file,

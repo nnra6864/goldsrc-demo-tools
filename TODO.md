@@ -59,3 +59,10 @@ The core. Port each `Server::ParseXxx` from ReHLTV `Core/src/Server.cpp` and the
 - [x] In the server container (`~/Containers/counter-strike`): build in a stage, run after each map when HLTV closes the demo, `--order` per server (regular `join`, competitive `team`). The owner deploys; agents only prepare the change (2026-11-18: counter-strike-podman `0b165b5`, not pushed or deployed; `voice.sh`, `ENABLE_VOICE_MKA`, `VOICE_MKA_ARGS`; libopus 1.6.1 built from source since bookworm's 1.3.1 fails the speech test)
 - [x] Forgejo repo, README usage (2026-11-18)
 - [x] Retire the Rust prototype (2026-11-18: counter-strike-podman `6f960f2`; the reference is now `138a934`)
+
+## 8. Demo tools (owner, 2026-11-19: a full replacement, more than voice)
+
+- [x] Rename to goldsrc-demo-tools, subcommands; `voice` is the old CLI (2026-11-19)
+- [ ] `info`: duration, frames, finalized or not, players who joined (HLTV skipped), machine-readable, so the server can delete demos nobody joined
+- [ ] `repair`: finish a demo cut off by a crash or kill (drop a cut-off last frame, write the last frame and the directory) so the game plays it
+- [ ] Server container: stop cleanly (HLTV `stoprecording` before shutdown), record only while players are on (`hltv_tools` plugin reports the count), repair leftovers, delete demos nobody joined

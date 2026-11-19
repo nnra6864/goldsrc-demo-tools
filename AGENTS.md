@@ -1,12 +1,12 @@
 # AGENTS.md
 
-Instructions for AI coding agents working on goldsrc-hltv-voice. Read this, then `DESIGN.md`, then `TODO.md` (your task list), before writing code.
+Instructions for AI coding agents working on goldsrc-demo-tools. Read this, then `DESIGN.md`, then `TODO.md` (your task list), before writing code.
 
 ---
 
 ## Project settings (edit me)
 
-- **Name:** goldsrc-hltv-voice. Binary, package and repo use that name; the Zig package/namespace is `goldsrc_hltv_voice`.
+- **Name:** goldsrc-demo-tools (was goldsrc-hltv-voice until 2026-11-19). Binary, package and repo use that name; the Zig package/namespace is `goldsrc_demo_tools`.
 - **Language / version:** Zig 0.17.1 (tagged release), pinned with `minimum_zig_version` in `build.zig.zon`. Never target Zig master.
 - **System dependency:** libopus (C, linked with `linkSystemLibrary("opus")`). Nothing else without asking.
 - **Platform:** Linux. It must also build for the CS server container (Debian bookworm, x86_64).
@@ -16,7 +16,7 @@ Instructions for AI coding agents working on goldsrc-hltv-voice. Read this, then
 
 ## What this project is
 
-A CLI that reads a GoldSrc demo (`.dem`, mainly HLTV demos from CS 1.6) and writes its voice chat as one `.mka` with an Opus track per player. It replaced a Rust prototype (`tools/demo-voice` in [counter-strike-podman](https://git.nnstdios.com/nnra6864/counter-strike-podman) at commit `138a934` (removed after it)), which is the behavioural reference. The owner cares about voice replays a lot: **never lose or corrupt voice silently**.
+A CLI for GoldSrc demos (`.dem`, mainly HLTV demos from CS 1.6). `voice` writes the voice chat as one `.mka` with an Opus track per player; more subcommands (`info`, `repair`) cover what the server needs around its demos. It replaced a Rust prototype (`tools/demo-voice` in [counter-strike-podman](https://git.nnstdios.com/nnra6864/counter-strike-podman) at commit `138a934` (removed after it)), which is the behavioural reference. The owner cares about voice replays a lot: **never lose or corrupt voice silently**.
 
 ## Hard rules
 

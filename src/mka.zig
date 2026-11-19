@@ -278,8 +278,8 @@ pub fn write(gpa: std.mem.Allocator, w: *std.Io.Writer, title: []const u8, durat
     const safe_title = try utf8Lossy(gpa, title);
     defer gpa.free(safe_title);
     try e.bytes(id.title, safe_title);
-    try e.bytes(id.muxing_app, "goldsrc-hltv-voice");
-    try e.bytes(id.writing_app, "goldsrc-hltv-voice");
+    try e.bytes(id.muxing_app, "goldsrc-demo-tools");
+    try e.bytes(id.writing_app, "goldsrc-demo-tools");
     e.end(info);
 
     const tracks_el = try e.begin(id.tracks);
