@@ -42,6 +42,9 @@ pub fn build(b: *std.Build) void {
     // so `zig build test` runs every file's tests.
     const tests = b.addTest(.{ .root_module = root_module });
     const run_tests = b.addRunArtifact(tests);
+    // The tests read testdata/ at runtime, which Zig's cache does not see: without this a
+    // fixture-only change reports the old run as cached instead of running the tests
+    run_tests.has_side_effects = true;
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_tests.step);
 }
