@@ -63,6 +63,6 @@ The core. Port each `Server::ParseXxx` from ReHLTV `Core/src/Server.cpp` and the
 ## 8. Demo tools (owner, 2026-11-19: a full replacement, more than voice)
 
 - [x] Rename to goldsrc-demo-tools, subcommands; `voice` is the old CLI (2026-11-19)
-- [ ] `info`: duration, frames, finalized or not, players who joined (HLTV skipped), machine-readable, so the server can delete demos nobody joined
+- [x] `info`: map, duration, directory, end, players who joined (HLTV skipped; without a SteamID counted apart), `key value` lines, so the server can delete demos nobody joined (2026-11-19; 4 of the 9 archive demos had nobody, one of them 16.6 h)
 - [ ] `repair`: finish a demo cut off by a crash or kill (drop a cut-off last frame, write the last frame and the directory) so the game plays it
 - [ ] Server container: stop cleanly (HLTV `stoprecording` before shutdown), record only while players are on (`hltv_tools` plugin reports the count), repair leftovers, delete demos nobody joined

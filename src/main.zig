@@ -8,12 +8,18 @@ const players = @import("players.zig");
 const timeline = @import("timeline.zig");
 const mka = @import("mka.zig");
 const dump = @import("dump.zig");
+const info = @import("info.zig");
 
 pub const usage =
     \\usage: goldsrc-demo-tools <command> <demo.dem> [options]
     \\
     \\  voice <demo.dem> [-o out.mka] [--tracks player|team|mix] [--order join|team] [--dump] [--lenient]
     \\      the voice chat as a .mka, one Opus track per player
+    \\  info <demo.dem>
+    \\      what the demo holds, one "key value" per line: map, duration, directory,
+    \\      end (complete or cut-off), players (joined with a SteamID, HLTV not
+    \\      counted), unidentified (joined without one, such as bots), then a
+    \\      "player <steamid or -> <name>" line each
     \\
 ;
 
@@ -146,9 +152,36 @@ fn report(w: *std.Io.Writer, d: demo.Demo, walk: *const messages.DemoMessages, r
 pub fn run(gpa: std.mem.Allocator, io: std.Io, args: []const []const u8, out: *std.Io.Writer, err: *std.Io.Writer) !Exit {
     if (args.len != 0 and std.mem.eql(u8, args[0], "voice")) {
         if (parseVoiceArgs(args[1..])) |o| return runVoice(gpa, io, o, out, err);
+    } else if (args.len == 2 and std.mem.eql(u8, args[0], "info") and !isFlag(args[1])) {
+        return runInfo(gpa, io, args[1], out, err);
     }
     try err.writeAll(usage);
     return .usage;
+}
+
+fn isFlag(a: []const u8) bool {
+    return a.len > 1 and a[0] == '-';
+}
+
+/// `info`: what the demo holds. Exits `partial` when frames failed to parse:
+/// the player counts may then miss someone.
+fn runInfo(gpa: std.mem.Allocator, io: std.Io, path: []const u8, out: *std.Io.Writer, err: *std.Io.Writer) !Exit {
+    const data = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .unlimited) catch |e| {
+        try err.print("goldsrc-demo-tools: {s}: {t}\n", .{ path, e });
+        return .err;
+    };
+    defer gpa.free(data);
+    const d = demo.Demo.open(data) catch {
+        try err.print("goldsrc-demo-tools: {s}: not a GoldSrc demo\n", .{path});
+        return .err;
+    };
+    var walk: messages.DemoMessages = .init(gpa, d);
+    defer walk.deinit();
+    var ps: players.Players = .init(gpa);
+    defer ps.deinit();
+    while (try walk.next()) |fm| try ps.add(fm.frame.time, fm.message);
+    try info.write(out, d, &walk, &ps);
+    return if (try report(err, d, &walk, null)) .partial else .ok;
 }
 
 /// `voice`: the .mka.
@@ -276,6 +309,7 @@ test {
     _ = @import("timeline.zig");
     _ = @import("mka.zig");
     _ = @import("dump.zig");
+    _ = @import("info.zig");
 }
 
 const testing = std.testing;
@@ -418,4 +452,31 @@ test "cli: a corrupt frame makes the run partial; --lenient writes anyway" {
     defer l.deinit();
     try testing.expectEqual(Exit.partial, l.code);
     try tmp.dir.access(testing.io, "bad.mka", .{});
+}
+
+test "cli: info" {
+    const gpa = testing.allocator;
+    var path_buf: [512]u8 = undefined;
+    var r = try cli(gpa, &.{ "info", try fixturePath(&path_buf, "one-player") });
+    defer r.deinit();
+    try testing.expectEqual(Exit.ok, r.code);
+    try testing.expectEqualStrings(
+        \\map de_dust2
+        \\duration 85.623
+        \\directory ok
+        \\end complete
+        \\players 1
+        \\unidentified 0
+        \\player 76561199487820327 nnra
+        \\
+    , r.out.written());
+
+    var t = try cli(gpa, &.{ "info", try fixturePath(&path_buf, "truncated-no-directory") });
+    defer t.deinit();
+    try testing.expectEqual(Exit.ok, t.code);
+    try testing.expect(std.mem.indexOf(u8, t.out.written(), "directory missing\nend cut-off\n") != null);
+
+    var u = try cli(gpa, &.{ "info", "-x" });
+    defer u.deinit();
+    try testing.expectEqual(Exit.usage, u.code);
 }

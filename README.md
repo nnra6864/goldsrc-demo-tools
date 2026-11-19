@@ -16,7 +16,13 @@ goldsrc-demo-tools voice <demo.dem> [-o out.mka] [--tracks player|team|mix] [--o
 
 Demos from a crashed server (no directory) work too.
 
-Exit codes: 0 ok (also when nobody spoke: nothing is written), 1 error, 2 usage, 3 parts of the demo couldn't be read (nothing written without `--lenient`, see the report on stderr).
+```sh
+goldsrc-demo-tools info <demo.dem>
+```
+
+What the demo holds, one `key value` per line for scripts: `map`, `duration`, `directory` (`ok`, or why not, `missing` for a demo that was never finished), `end` (`complete` or `cut-off`), `players` (joined with a SteamID; HLTV isn't counted), `unidentified` (joined without one, such as bots), then a `player <steamid or -> <name>` line each.
+
+Exit codes: 0 ok (for `voice`, also when nobody spoke: nothing is written), 1 error, 2 usage, 3 parts of the demo couldn't be read (nothing written without `--lenient`, see the report on stderr).
 
 ## Recording voice
 
