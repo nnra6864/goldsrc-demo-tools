@@ -9,6 +9,7 @@ const timeline = @import("timeline.zig");
 const mka = @import("mka.zig");
 const dump = @import("dump.zig");
 const info = @import("info.zig");
+const repair = @import("repair.zig");
 
 pub const usage =
     \\usage: goldsrc-demo-tools <command> <demo.dem> [options]
@@ -20,6 +21,9 @@ pub const usage =
     \\      end (complete or cut-off), players (joined with a SteamID, HLTV not
     \\      counted), unidentified (joined without one, such as bots), then a
     \\      "player <steamid or -> <name>" line each
+    \\  repair <demo.dem> [-o out.dem]
+    \\      finish a demo HLTV never closed (crash, kill) so the game plays it:
+    \\      drops a cut-off last frame, writes the directory. In place unless -o
     \\
 ;
 
@@ -154,6 +158,8 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, args: []const []const u8, out: *s
         if (parseVoiceArgs(args[1..])) |o| return runVoice(gpa, io, o, out, err);
     } else if (args.len == 2 and std.mem.eql(u8, args[0], "info") and !isFlag(args[1])) {
         return runInfo(gpa, io, args[1], out, err);
+    } else if (args.len != 0 and std.mem.eql(u8, args[0], "repair")) {
+        if (parseRepairArgs(args[1..])) |o| return runRepair(gpa, io, o, out, err);
     }
     try err.writeAll(usage);
     return .usage;
@@ -182,6 +188,67 @@ fn runInfo(gpa: std.mem.Allocator, io: std.Io, path: []const u8, out: *std.Io.Wr
     while (try walk.next()) |fm| try ps.add(fm.frame.time, fm.message);
     try info.write(out, d, &walk, &ps);
     return if (try report(err, d, &walk, null)) .partial else .ok;
+}
+
+/// Options of `repair`.
+pub const RepairOptions = struct {
+    demo: []const u8,
+    /// Null: in place.
+    out: ?[]const u8 = null,
+};
+
+/// Parses `repair`'s arguments (after the command). Null means usage error.
+pub fn parseRepairArgs(args: []const []const u8) ?RepairOptions {
+    return switch (args.len) {
+        1 => if (isFlag(args[0])) null else .{ .demo = args[0] },
+        3 => if (!isFlag(args[0]) and (std.mem.eql(u8, args[1], "-o") or std.mem.eql(u8, args[1], "--output")))
+            .{ .demo = args[0], .out = args[2] }
+        else
+            null,
+        else => null,
+    };
+}
+
+/// `repair`: finishes an unclosed demo. A complete one is left alone (exit 0).
+fn runRepair(gpa: std.mem.Allocator, io: std.Io, o: RepairOptions, out: *std.Io.Writer, err: *std.Io.Writer) !Exit {
+    const data = std.Io.Dir.cwd().readFileAlloc(io, o.demo, gpa, .unlimited) catch |e| {
+        try err.print("goldsrc-demo-tools: {s}: {t}\n", .{ o.demo, e });
+        return .err;
+    };
+    defer gpa.free(data);
+    const d = demo.Demo.open(data) catch {
+        try err.print("goldsrc-demo-tools: {s}: not a GoldSrc demo\n", .{o.demo});
+        return .err;
+    };
+    const p = switch (repair.plan(d)) {
+        .repair => |p| p,
+        .cannot => |c| {
+            try err.print("{s}: {s}\n", .{ o.demo, c.describe() });
+            return if (c == .complete) .ok else .err;
+        },
+    };
+    const path = o.out orelse o.demo;
+    writeRepaired(io, path, data, p) catch |e| {
+        try err.print("goldsrc-demo-tools: {s}: {t}\n", .{ path, e });
+        return .err;
+    };
+    if (p.dropped != 0) try err.print("{s}: dropped {d} bytes: the cut-off last frame, and any directory left half-written\n", .{ o.demo, p.dropped });
+    try out.print("repaired: ", .{});
+    try demo.formatFixed(out, p.time, 3);
+    try out.print("s, {d} frames -> {s}\n", .{ p.frames, path });
+    return .ok;
+}
+
+/// Writes a repaired demo through a temporary file renamed into place: a
+/// failed run leaves the original as it was.
+fn writeRepaired(io: std.Io, path: []const u8, data: []const u8, p: repair.Plan) !void {
+    var af = try std.Io.Dir.cwd().createFileAtomic(io, path, .{ .replace = true });
+    defer af.deinit(io);
+    var buf: [64 * 1024]u8 = undefined;
+    var fw = af.file.writer(io, &buf);
+    try repair.write(&fw.interface, data, p);
+    try fw.interface.flush();
+    try af.replace(io);
 }
 
 /// `voice`: the .mka.
@@ -310,6 +377,7 @@ test {
     _ = @import("mka.zig");
     _ = @import("dump.zig");
     _ = @import("info.zig");
+    _ = @import("repair.zig");
 }
 
 const testing = std.testing;
@@ -479,4 +547,41 @@ test "cli: info" {
     var u = try cli(gpa, &.{ "info", "-x" });
     defer u.deinit();
     try testing.expectEqual(Exit.usage, u.code);
+}
+
+test "parseRepairArgs" {
+    try testing.expectEqualStrings("x.dem", parseRepairArgs(&.{"x.dem"}).?.demo);
+    try testing.expectEqual(@as(?[]const u8, null), parseRepairArgs(&.{"x.dem"}).?.out);
+    try testing.expectEqualStrings("y.dem", parseRepairArgs(&.{ "x.dem", "-o", "y.dem" }).?.out.?);
+    for ([_][]const []const u8{ &.{}, &.{"-o"}, &.{ "x.dem", "-o" }, &.{ "x.dem", "y.dem" }, &.{ "x.dem", "--bogus", "y" } }) |bad|
+        try testing.expectEqual(@as(?RepairOptions, null), parseRepairArgs(bad));
+}
+
+test "cli: repair in place, then it is complete and info agrees" {
+    const gpa = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const data = try testdata.readFixture(gpa, "truncated-no-directory", ".dem");
+    defer gpa.free(data);
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "x.dem", .data = data });
+    var path_buf: [512]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, ".zig-cache/tmp/{s}/x.dem", .{tmp.sub_path});
+
+    var r = try cli(gpa, &.{ "repair", path });
+    defer r.deinit();
+    try testing.expectEqual(Exit.ok, r.code);
+    try testing.expect(std.mem.startsWith(u8, r.out.written(), "repaired: 730.198s, "));
+    try testing.expect(std.mem.indexOf(u8, r.err.written(), "dropped ") != null);
+
+    var i = try cli(gpa, &.{ "info", path });
+    defer i.deinit();
+    try testing.expectEqual(Exit.ok, i.code);
+    try testing.expect(std.mem.indexOf(u8, i.out.written(), "directory ok\nend complete\n") != null);
+    try testing.expectEqualStrings("", i.err.written());
+
+    var again = try cli(gpa, &.{ "repair", path });
+    defer again.deinit();
+    try testing.expectEqual(Exit.ok, again.code);
+    try testing.expectEqualStrings("", again.out.written());
+    try testing.expect(std.mem.indexOf(u8, again.err.written(), "complete already") != null);
 }

@@ -59,6 +59,17 @@ Any other type value (10..255) is read as a network frame, like types 0 and 1: `
 
 Frames in HLTV demos (verified on the test demos): the startup entry is one network frame (type 0) and a next-section frame. The game entry is a start-time frame, then network frames (type 1), each but the last followed by a client-data frame, and a final next-section frame. Every network frame holds one `svc_time`, the startup frame included, except the last network frame of a finalized demo, which has none (so finalized demos have one `SvcTime` fewer than network frames; a demo cut off before finalizing has as many).
 
+### Finishing a demo, and `repair` (verified 2026-11-19)
+
+What HLTV writes, in order (`DemoFile::StartRecording`, `CloseFile`):
+
+- At the start: the header with directory offset 0, the startup entry's frames, a next-section frame (type 5), then the game entry, which starts with a start-time frame (type 2).
+- At the end: a next-section frame (type 5) with the demo time and the frame count, then the directory: `i32 2`, the startup entry (`LOADING`, type 0, time 0, frames 0, offset 544, its length), the game entry (`Playback`, type 1, the demo time, the frame count, its offset, and its length up to and including that last next-section frame). Then it seeks back and writes the directory offset into the header (bytes 540..544).
+- The frame count is `m_frameCount`, incremented for every network frame written (type 1), so it equals the number of type 1 frames in the game entry.
+- The end time is `GetDemoTime()` at close. `repair` uses the last frame's time, and that matches exactly on the test demos.
+
+`repair` keeps everything up to the last complete frame, so a cut-off frame is dropped. It stops after the game entry's next-section frame if there is one (HLTV died while writing the directory) and writes the end as above. Cutting a finished test demo back to the unfinished state and repairing it gives the original back byte for byte. ReHLTV's own player (`playdemo`) warns "Demo had bogus number of directory entries!" on an unfinished demo and reads it in order; on a repaired one it doesn't (checked on an archive demo). The game client is believed to reject unfinished demos with a similar "bogus # of directory entries" error, which is why `repair` exists (not tested with a client).
+
 ## Net messages (ReHLTV `Core/src/Server.cpp`)
 
 A network message frame's data is a sequence of messages: `u8 id`, then the message. No lengths, so every message must be parsed to find the next. The table of ids and parse functions is `Server::m_ClientFuncs` at the top of `Server.cpp`; each `Server::ParseXxx` shows exactly what to read.

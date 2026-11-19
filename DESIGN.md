@@ -26,6 +26,8 @@ goldsrc-demo-tools voice <demo.dem> [-o out.mka] [--tracks player|team|mix] [--o
 
 `info <demo.dem>` prints `key value` lines: `map`, `duration`, `directory`, `end`, `players`, `unidentified`, and a `player <steamid or -> <name>` line each. `players` counts who joined with a SteamID, `unidentified` who joined without one (bots, non-Steam clients) or spoke from a slot no userinfo named; HLTV is never counted. Exit 3 when frames failed to parse, since a lost userinfo could hide a player: a script deleting empty demos must check the exit code.
 
+`repair <demo.dem> [-o out.dem]` finishes a demo HLTV never closed, exactly as HLTV would have (doc/FORMAT.md "Finishing a demo"). Only a cut-off last frame, or a half-written directory, is dropped. It refuses a demo whose directory offset is set but broken, or that has a corrupt frame length, since rewriting those could lose more. It works in place through a temporary file, and a complete demo is left alone (exit 0).
+
 The tool replaces the Rust prototype fully (owner, 2026-11-19), including what the server needs around demos, so it has subcommands. `voice` has the prototype's flags and behaviour, plus `--lenient`; its options are below.
 
 - `-o`: output path. Default: the demo path with `.mka`.

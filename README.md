@@ -22,11 +22,17 @@ goldsrc-demo-tools info <demo.dem>
 
 What the demo holds, one `key value` per line for scripts: `map`, `duration`, `directory` (`ok`, or why not, `missing` for a demo that was never finished), `end` (`complete` or `cut-off`), `players` (joined with a SteamID; HLTV isn't counted), `unidentified` (joined without one, such as bots), then a `player <steamid or -> <name>` line each.
 
+```sh
+goldsrc-demo-tools repair <demo.dem> [-o out.dem]
+```
+
+Finishes a demo that was never closed (server crash, HLTV or the container killed), so the game can play it. Only a cut-off last frame is dropped. It works in place unless `-o` is given, and a complete demo is left alone.
+
 Exit codes: 0 ok (for `voice`, also when nobody spoke: nothing is written), 1 error, 2 usage, 3 parts of the demo couldn't be read (nothing written without `--lenient`, see the report on stderr).
 
 ## Recording voice
 
-HLTV only records the voices it can hear, and on CS it's a spectator, so normally it hears nobody. [counter-strike-podman](https://git.nnstdios.com/nnra6864/counter-strike-podman) has a small AMX Mod X plugin (`plugins/hltv_voice.sma`) that lets HLTV hear every player while players still hear only their own team. Without it, `sv_alltalk 1` (everyone hears everyone) or `3` (spectators hear everyone) also works. Its image also runs this tool after every map, writing a `.mka` next to each demo.
+HLTV only records the voices it can hear, and on CS it's a spectator, so normally it hears nobody. [counter-strike-podman](https://git.nnstdios.com/nnra6864/counter-strike-podman) has a small AMX Mod X plugin (`plugins/hltv_tools.sma`) that lets HLTV hear every player while players still hear only their own team. Without it, `sv_alltalk 1` (everyone hears everyone) or `3` (spectators hear everyone) also works. Its image also runs this tool after every map: it repairs demos left by a crash, deletes those nobody joined, and writes a `.mka` next to the rest.
 
 ## Building
 
